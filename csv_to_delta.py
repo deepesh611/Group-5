@@ -8,7 +8,7 @@ from pyspark.sql import SparkSession
 from delta import configure_spark_with_delta_pip
 
 from pyspark.sql.functions import (
-    col, to_timestamp, sha2, concat_ws, lit,
+    col, to_timestamp, sha2, concat_ws, lit,    
     year, count, when, isnan
 )
 
@@ -62,9 +62,16 @@ def create_spark_session():
         .config("spark.driver.host", "127.0.0.1")
         .config("spark.driver.bindAddress", "127.0.0.1")
 
-        # ✅ REQUIRED for Delta (your error)
+        # ✅ REQUIRED for Delta
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+
+        # ✅ Driver memory — bump if you hit OOM on large Synthea exports
+        .config("spark.driver.memory", "4g")
+        .config("spark.driver.maxResultSize", "2g")
+
+        # ✅ Adaptive query execution — lets Spark optimise joins/shuffles at runtime
+        .config("spark.sql.adaptive.enabled", "true")
     )
 
     spark = configure_spark_with_delta_pip(builder).getOrCreate()
@@ -240,7 +247,9 @@ def process_single_csv(spark, csv_path, delta_base_dir):
     # ------------------------------------------------------------------
     print("[1/6] Loading CSV ...")
     try:
-        df = spark.read.csv(csv_path, header=True, inferSchema=True)
+        # samplingRatio=0.1 limits schema inference to 10% of rows — avoids
+        # reading the full file just to decide column types.
+        df = spark.read.csv(csv_path, header=True, inferSchema=True, samplingRatio=0.1)
     except Exception as exc:
         report["error"] = str(exc)
         print(f"      FAILED: {exc}")
@@ -314,6 +323,10 @@ def process_single_csv(spark, csv_path, delta_base_dir):
     report["status"] = "ok"
     report["columns"] = len(df.columns)
     report["null_stats"] = null_stats
+
+    # Free cached RDDs / broadcast vars before moving to the next table
+    spark.catalog.clearCache()
+
     return report, df, null_stats
 
 
