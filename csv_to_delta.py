@@ -41,6 +41,9 @@ HASH_SALT = os.environ.get("PHI_HASH_SALT", "synthea_default_salt_change_me")
 # Columns to hash (lowercase). These are patient/encounter UUIDs used as join keys.
 HASH_COLS = {"patient", "id", "encounter"}
 
+# Column fragments identifying UUIDs/IDs (not to be treated as timestamps)
+_UUID_KEYWORDS = ("id", "uuid") 
+
 # Columns to redact (lowercase). Direct identifiers — no analytical use.
 REDACT_COLS = {"ssn", "drivers", "passport", "first", "last", "maiden", "address"}
 
@@ -72,6 +75,9 @@ def create_spark_session():
 
         # ✅ Adaptive query execution — lets Spark optimise joins/shuffles at runtime
         .config("spark.sql.adaptive.enabled", "true")
+
+        # ✅ Robustness: Disable ANSI mode so malformed date casts return NULL instead of crashing
+        .config("spark.sql.ansi.enabled", "false")
     )
 
     spark = configure_spark_with_delta_pip(builder).getOrCreate()
@@ -83,7 +89,7 @@ def create_spark_session():
 # ---------------------------------------------------------------------------
 
 _TIMESTAMP_KEYWORDS = ("start", "stop")   # date cols handled separately (YEAR_COLS)
-_UUID_KEYWORDS = ("_id", "_uuid")
+# Using refined keywords for UUID/ID detection
 
 
 def clean_column_names(df):
