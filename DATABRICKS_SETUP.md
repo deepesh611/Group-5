@@ -377,3 +377,75 @@ starting with 00_config.py, then 01_schema_utils.py, and so on upward.
 
 ---
 *Setup guide for Project 5 — Natural Language Data Explorer & Self-Healing Pipeline*
+
+
+## How to test ingestion pipeline:
+Follow the 4-step progressive test plan in the walkthrough:
+
+Dry run on patients only — validates ADLS connectivity, schema loading, drift detection (0 writes)
+Real write on patients only — validates Delta write, row count check, metadata update
+Drift detection test — add a column to a CSV copy and run dry-run to see the WARNING
+Full run all tables — production run, ~15–30 min total
+
+## How to Test Manually
+
+### Step 1: Pre-test checklist
+□ External Location created and accessible (run ensure_adls_dirs() in 00_config)
+□ master_schema.json uploaded to {ADLS_BASE}/metadata/master_schema.json
+□ At least one Synthea CSV uploaded to {ADLS_BASE}/raw/patients.csv
+□ Secret scope 'llm-scope' with key 'openai-key' configured
+□ Cluster running (DBR 14.3 LTS or higher, with langchain_openai library)
+□ Unity Catalog enabled with catalog 'project_5' and schema 'delta_tables' created
+
+### Step 2: Test 1 — Dry run (safe, no writes)
+Open pipeline_1_ingestion in Databricks Repos
+Set widget dry_run = true, table_filter = patients
+Click Run All
+Expected output:
+[1/6] Reading CSV: abfss://...patients.csv
+[2/6] Normalizing column names
+[3/6] Pre-flight schema drift check
+✅ patients: No schema drift detected.
+[5/6] DRY RUN — would write to project_5.delta_tables.patients
+⏭️  patients  rows=0  cols=17  drift=NONE  status=SKIPPED
+
+### Step 3: Test 2 — Single table real write
+Set dry_run = false, table_filter = patients, on_critical_drift = fallback
+Run All
+Expected output:
+[1/6] Reading CSV: Mode: explicit schema (17 fields) from master_schema.json
+Rows: 132,893  |  Columns: 17
+[3/6] Pre-flight schema drift check
+✅ patients: No schema drift detected.
+[5/6] Writing Delta table → project_5.delta_tables.patients
+✓ 132,893 rows written and verified
+[6/6] Updating metadata ...
+✅ 'patients' complete — 132,893 rows
+Verify in Databricks SQL: SELECT COUNT(*) FROM project_5.delta_tables.patients
+
+### Step 4: Test 3 — Drift detection (safe, no writes)
+Upload a modified patients.csv to ADLS raw/ with an extra column (e.g., add blood_type column)
+Set dry_run = true, table_filter = patients
+Run All
+Expected output:
+[3/6] Pre-flight schema drift check
+⚠️  DRIFT DETECTED — patients  (Severity: WARNING)
++ New columns (1):
+    blood_type                       string
+
+### Step 5: Test 4 — Full pipeline all tables
+Set table_filter = all, dry_run = false, on_critical_drift = fallback
+Run All (expect ~15-30 minutes for 10M rows total)
+Verify in Databricks SQL:
+sql
+SELECT table_name, COUNT(*) as rows
+FROM project_5.information_schema.tables
+WHERE table_schema = 'delta_tables'
+GROUP BY table_name
+ORDER BY rows DESC
+
+### Step 6: Verify ADLS logs
+python
+# Run in a Databricks notebook cell to check audit logs
+display(dbutils.fs.ls("abfss://project5data@project5storage.dfs.core.windows.net/logs/ingestion/"))
+display(dbutils.fs.ls("abfss://project5data@project5storage.dfs.core.windows.net/metadata/"))
