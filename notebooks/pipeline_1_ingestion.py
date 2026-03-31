@@ -178,6 +178,7 @@ def trigger_pipeline_3(table_name: str, drift: dict) -> dict:
             arguments={
                 "table_name":  table_name,
                 "drift_event": drift_payload,
+                "run_mode":    "autonomous",   # no human widget interaction when called from P1
             },
         )
         result = json.loads(result_str) if result_str else {}
@@ -193,31 +194,61 @@ def trigger_pipeline_3(table_name: str, drift: dict) -> dict:
 # CELL 7 — Helper: Write Delta Table (Unity Catalog)
 # =============================================================================
 
-def write_delta_table(df, table_name: str, merge_schema: bool = False) -> int:
+def write_delta_table(df, table_name: str, merge_schema: bool = False, overwrite_schema: bool = False) -> int:
     """
-    Write a DataFrame to the Unity Catalog Delta table using saveAsTable().
-    saveAsTable() is the correct API for Unity Catalog — it creates the table
-    on first write and manages its location under the catalog/schema.
+    Write a DataFrame to the Unity Catalog Delta table.
 
-    mergeSchema=true allows the Delta table schema to evolve on overwrite
-    (e.g. if the new DataFrame has an extra column that wasn't in the previous
-    table version). Without it, Databricks will reject schema mismatches.
+    Uses: CREATE OR REPLACE TABLE <full_name> USING DELTA AS SELECT * FROM <tmp_view>
+
+    WHY NOT saveAsTable(mode='overwrite')?
+    ──────────────────────────────────────────────────────────────────────────
+    saveAsTable() reconciles the incoming DataFrame schema against the existing
+    Delta _delta_log on ADLS.  DROP TABLE in Unity Catalog removes the catalog
+    entry but DOES NOT always purge the _delta_log and Parquet files from the
+    managed storage path.  When saveAsTable() finds those stale files, Delta
+    reads the old (potentially corrupt) schema and tries to CAST the DataFrame's
+    columns to match it.  This causes errors like:
+      •  CAST_INVALID_INPUT     — e.g. UUID being cast to DATE
+      •  CANNOT_PARSE_TIMESTAMP — e.g. "1987-03-02<uuid>" in a date column
+
+    CREATE OR REPLACE TABLE ... AS SELECT is immune because:
+      •  It is a DDL statement, not a DML overwrite — Delta does NOT read the
+         existing _delta_log to determine what to cast
+      •  It atomically drops + recreates the table from the SELECT's schema
+      •  Unity Catalog guarantees the managed path is cleaned during REPLACE
+      •  No schema reconciliation, no casting, no stale-log interaction
+
+    The merge_schema / overwrite_schema params are kept for API compatibility
+    but are not used — CORT always produces a fresh schema from the DataFrame.
 
     Returns the final post-write row count from the Delta table for validation.
     """
+    import time as _time
+
     full_name = get_full_table_name(table_name)  # project_5.delta_tables.<table>
 
-    (
-        df.write
-        .format("delta")
-        .mode(DEFAULT_WRITE_MODE)
-        .option("mergeSchema", str(merge_schema).lower())
-        .saveAsTable(full_name)
-    )
+    # Timestamped view name prevents collisions if the pipeline runs in parallel
+    tmp_view = f"_p1_staging_{table_name}_{int(_time.time())}"
+
+    df.createOrReplaceTempView(tmp_view)
+    try:
+        spark.sql(f"""
+            CREATE OR REPLACE TABLE {full_name}
+            USING DELTA
+            AS SELECT * FROM {tmp_view}
+        """)
+        log.info(f"[{table_name}] CREATE OR REPLACE TABLE complete → {full_name}")
+    finally:
+        # Always clean up the temp view even if the SQL fails
+        try:
+            spark.catalog.dropTempView(tmp_view)
+        except Exception:
+            pass
 
     # Post-write validation: query the Delta table directly
     final_count = spark.sql(f"SELECT COUNT(*) AS n FROM {full_name}").collect()[0]["n"]
     return final_count
+
 
 # COMMAND ----------
 
@@ -298,8 +329,15 @@ for table_name in TABLES_TO_PROCESS:
 
     try:
         # ── STEP 1: Load CSV — ALL columns as StringType ─────────────────
+        # ── STEP 1: Load CSV — ALL columns as StringType ─────────────────
         print(f"\n  [1/6] Reading CSV: {csv_file.path}")
 
+        if table_name in known_tables:
+            # ── KNOWN TABLE: inferSchema=False reads ALL CSV columns as
+            # StringType without filtering. This preserves drift columns
+            # (columns not in master_schema.json) so detect_drift() can
+            # see them. cast_date_columns() converts known columns to their
+            # declared types afterwards.
         if table_name in known_tables:
             # ── KNOWN TABLE: inferSchema=False reads ALL CSV columns as
             # StringType without filtering. This preserves drift columns
@@ -310,15 +348,20 @@ for table_name in TABLES_TO_PROCESS:
                 csv_file.path,
                 header=True,
                 inferSchema=False,   # ALL columns → StringType, nothing dropped
+                inferSchema=False,   # ALL columns → StringType, nothing dropped
             )
             print(f"      Mode: all-string read ({len(df.columns)} cols from CSV header)")
+            print(f"      Mode: all-string read ({len(df.columns)} cols from CSV header)")
         else:
+            # ── UNKNOWN TABLE: infer types so the Delta table gets
+            # meaningful schema on first write.
             # ── UNKNOWN TABLE: infer types so the Delta table gets
             # meaningful schema on first write.
             df = spark.read.csv(
                 csv_file.path,
                 header=True,
                 inferSchema=True,
+                samplingRatio=0.25,
                 samplingRatio=0.25,
             )
             print(f"      Mode: inferred schema (table not in master_schema.json)")
@@ -353,13 +396,20 @@ for table_name in TABLES_TO_PROCESS:
             # Unknown columns (not in master_schema.json) are untouched
             # by cast_date_columns() and remain StringType — the drift
             # detector will flag them correctly as new columns.
+            # Cast BEFORE drift detection so detect_drift() compares real
+            # types (date, double, etc.) against the declared schema types.
+            # Unknown columns (not in master_schema.json) are untouched
+            # by cast_date_columns() and remain StringType — the drift
+            # detector will flag them correctly as new columns.
             df = cast_date_columns(df, table_name)
             drift = detect_drift(table_name, df)
             print(generate_drift_summary(drift))
             report["drift_severity"] = drift["severity"]
 
+
         # ── Handle drift ─────────────────────────────────────────────────
-        use_merge_schema = False
+        use_merge_schema     = False   # mergeSchema: ADD new columns to existing schema
+        use_overwrite_schema = False   # overwriteSchema: REPLACE existing schema entirely
 
         if drift["has_drift"]:
             log_drift_event(table_name, drift)  # always audit-log drift events
@@ -367,12 +417,18 @@ for table_name in TABLES_TO_PROCESS:
             if drift["severity"] == "CRITICAL":
                 if ON_CRITICAL_DRIFT == "fallback":
                     msg = (
-                        f"CRITICAL drift on '{table_name}' — proceeding with "
-                        f"mergeSchema fallback as requested. Run Pipeline 3 separately."
+                        f"CRITICAL drift on '{table_name}' — overwriting schema "
+                        f"with DataFrame's schema (overwriteSchema). "
+                        f"Run Pipeline 3 separately to fix master_schema.json."
                     )
                     log.warning(f"[{table_name}] {msg}")
                     report["notes"].append(msg)
-                    use_merge_schema = True
+                    # Use overwriteSchema=true, NOT mergeSchema.
+                    # CRITICAL drift typically means the CSV is MISSING columns
+                    # that existed in the Delta table. mergeSchema tries to reconcile
+                    # types with the stale/corrupt existing schema and raises
+                    # CAST_INVALID_INPUT. overwriteSchema replaces the schema cleanly.
+                    use_overwrite_schema = True
 
                 else:  # ON_CRITICAL_DRIFT == "halt" (default)
                     print(f"\n  🚨 CRITICAL drift — triggering AI Advisor (Pipeline 3) …")
@@ -406,11 +462,12 @@ for table_name in TABLES_TO_PROCESS:
                         msg = (
                             f"Pipeline 3 could not resolve drift for '{table_name}' "
                             f"({p3_result.get('status', 'unknown')}). "
-                            f"Using mergeSchema fallback."
+                            f"Using overwriteSchema fallback."
                         )
                         log.warning(f"[{table_name}] {msg}")
                         report["notes"].append(msg)
-                        use_merge_schema = True
+                        use_overwrite_schema = True
+
 
             elif drift["severity"] == "WARNING":
                 # WARNING: proceed with mergeSchema; log for manual P3 review.
@@ -434,7 +491,11 @@ for table_name in TABLES_TO_PROCESS:
                 log.info(f"[{table_name}] {msg}")
 
         # ── STEP 4: Cast types (already done in STEP 3 for known tables) ─
+        # ── STEP 4: Cast types (already done in STEP 3 for known tables) ─
         print(f"\n  [4/6] Casting column types …")
+        # cast_date_columns() was already called in STEP 3 for known tables.
+        # For unknown tables read with inferSchema=True, types are already
+        # inferred by Spark — no additional casting needed.
         # cast_date_columns() was already called in STEP 3 for known tables.
         # For unknown tables read with inferSchema=True, types are already
         # inferred by Spark — no additional casting needed.
@@ -452,9 +513,18 @@ for table_name in TABLES_TO_PROCESS:
             continue
 
         print(f"\n  [5/6] Writing Delta table → {full_table_name}")
-        print(f"      Mode: overwrite | mergeSchema={str(use_merge_schema).lower()}")
+        schema_mode = (
+            "overwriteSchema" if use_overwrite_schema else
+            "mergeSchema"     if use_merge_schema else
+            "strict"
+        )
+        print(f"      Mode: overwrite | schema={schema_mode}")
 
-        final_count = write_delta_table(df, table_name, merge_schema=use_merge_schema)
+        final_count = write_delta_table(
+            df, table_name,
+            merge_schema=use_merge_schema,
+            overwrite_schema=use_overwrite_schema,
+        )
 
         # Row count sanity check
         if final_count != source_row_count:
@@ -491,9 +561,16 @@ for table_name in TABLES_TO_PROCESS:
             "notes":          report["notes"],
         })
 
-        report["status"] = "fallback" if use_merge_schema else "ok"
-        print(f"\n  {'⚠️ ' if use_merge_schema else '✅'} "
-              f"'{table_name}' complete — {final_count:,} rows")
+        report["status"] = (
+            "overwritten" if use_overwrite_schema else
+            "fallback"    if use_merge_schema else
+            "ok"
+        )
+        icon = "⚠️ " if use_overwrite_schema or use_merge_schema else "✅"
+        print(
+            f"\n  {icon} '{table_name}' complete — {final_count:,} rows "
+            f"[schema={schema_mode}]"
+        )
 
     except Exception as exc:
         report["error"] = str(exc)

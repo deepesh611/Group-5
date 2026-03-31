@@ -143,13 +143,22 @@ def ensure_adls_dirs():
     """
     Verify that the required External Location sub-paths are reachable.
     Called once during cluster init or first pipeline run.
+    Checks all paths that pipelines read from or write to.
     """
-    for path in [RAW_PATH, METADATA_PATH, LOGS_PATH]:
+    paths_to_check = [
+        RAW_PATH,                       # Pipeline 1: CSV source
+        METADATA_PATH,                  # All pipelines: master_schema.json
+        LOGS_PATH,                      # All pipelines: log root
+        f"{LOGS_PATH}/ingestion",       # Pipeline 1: run audit logs
+        f"{LOGS_PATH}/drift",           # Pipeline 1 writes, Pipeline 3 reads
+        f"{LOGS_PATH}/advisor",         # Pipeline 3: advisor event logs
+    ]
+    for path in paths_to_check:
         try:
             dbutils.fs.ls(path)
             log.info(f"✅ Reachable: {path}")
         except Exception:
             log.warning(
                 f"⚠️  Cannot reach {path} — verify External Location and "
-                "Access Connector IAM permissions."
+                "Access Connector IAM permissions (Storage Blob Data Contributor)."
             )
