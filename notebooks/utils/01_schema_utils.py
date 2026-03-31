@@ -127,13 +127,15 @@ def cast_date_columns(df, table_name: str):
                 )
 
             elif t == "double":
-                df = df.withColumn(col_name, col(col_name).cast("double"))
+                # try_cast returns NULL for invalid input in ANSI mode (safe).
+                # col().cast("double") raises AnalysisException in ANSI mode.
+                df = df.withColumn(col_name, expr(f"try_cast({safe_name} AS DOUBLE)"))
 
             elif t in ("long", "int", "integer"):
-                df = df.withColumn(col_name, col(col_name).cast("long"))
+                df = df.withColumn(col_name, expr(f"try_cast({safe_name} AS BIGINT)"))
 
             elif t == "boolean":
-                df = df.withColumn(col_name, col(col_name).cast("boolean"))
+                df = df.withColumn(col_name, expr(f"try_cast({safe_name} AS BOOLEAN)"))
 
         except Exception as e:
             log.warning(f"Type cast plan failed for '{col_name}' → '{t}': {e}")
