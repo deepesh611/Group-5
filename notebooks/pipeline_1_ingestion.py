@@ -105,53 +105,25 @@ if DRY_RUN:
 
 # COMMAND ----------
 
+# CELL 4 — CSV Reading Strategy
 # =============================================================================
-# CELL 4 — Helper: Build Schema-Aware Spark SchemaType
-# =============================================================================
-# Using inferSchema=True + samplingRatio can produce inconsistent types when
-# a column has rare values in the unsampled portion (e.g. a numeric column with
-# one stray empty string in the last 90% would be inferred as StringType).
-# This helper builds an explicit StructType from master_schema.json so that
-# Spark reads the CSV with the declared types — no sampling instability.
+# We ALWAYS read CSVs with inferSchema=False for ALL tables.
+#
+# WHY NOT use an explicit StructType schema built from master_schema.json?
+#   When spark.read.csv() is given an explicit schema with header=True, Spark
+#   ONLY materialises columns whose names appear in the schema. Any extra CSV
+#   columns (new Synthea fields, drift columns) are SILENTLY DROPPED before
+#   drift detection ever runs — so the pipeline reports "no drift" even when
+#   new columns exist in the CSV. This is incorrect.
+#
+# inferSchema=False reads ALL columns from the CSV header as StringType.
+# cast_date_columns() then converts known columns to their declared types.
+# Unknown/new columns remain StringType → correctly detected as drift.
+#
+# inferSchema=True is only used for genuinely unknown tables (not in
+# master_schema.json) because there we have no declared types to cast to.
 
-from pyspark.sql.types import (
-    StructType, StructField,
-    StringType, LongType, IntegerType, DoubleType,
-    BooleanType, DateType, TimestampType,
-)
-
-_TYPE_MAP = {
-    "string":    StringType(),
-    "long":      LongType(),
-    "int":       IntegerType(),
-    "integer":   IntegerType(),
-    "double":    DoubleType(),
-    "float":     DoubleType(),
-    "boolean":   BooleanType(),
-    "date":      DateType(),
-    "timestamp": TimestampType(),
-}
-
-def build_spark_schema_from_master(table_name: str):
-    """
-    Build a Spark StructType from master_schema.json column definitions.
-    All columns default to StringType for safe CSV reading; explicit types
-    for known numeric/date columns are applied in cast_date_columns() after load.
-
-    We read ALL CSV columns as StringType initially and then cast — this is the
-    safest pattern for CSVs where a single bad value can corrupt type inference.
-
-    Returns None if the table is not in master_schema.json (fall back to inferSchema).
-    """
-    try:
-        cols = get_table_columns(table_name)
-        if not cols:
-            return None
-        fields = [StructField(c, StringType(), nullable=True) for c in cols.keys()]
-        return StructType(fields)
-    except Exception:
-        return None
-
+from pyspark.sql.types import StructType   # kept for any downstream type checks
 
 # COMMAND ----------
 
@@ -325,29 +297,29 @@ for table_name in TABLES_TO_PROCESS:
     csv_file = all_csv_files[table_name]
 
     try:
-        # ── STEP 1: Load CSV with schema-aware reading ────────────────────
+        # ── STEP 1: Load CSV — ALL columns as StringType ─────────────────
         print(f"\n  [1/6] Reading CSV: {csv_file.path}")
 
-        # Use explicit schema (all-StringType) if the table is in master_schema.
-        # This avoids samplingRatio type-inference instability on large files.
-        # cast_date_columns() will convert to correct types after load.
-        explicit_schema = build_spark_schema_from_master(table_name) \
-            if table_name in known_tables else None
-
-        if explicit_schema is not None:
+        if table_name in known_tables:
+            # ── KNOWN TABLE: inferSchema=False reads ALL CSV columns as
+            # StringType without filtering. This preserves drift columns
+            # (columns not in master_schema.json) so detect_drift() can
+            # see them. cast_date_columns() converts known columns to their
+            # declared types afterwards.
             df = spark.read.csv(
                 csv_file.path,
                 header=True,
-                schema=explicit_schema,
+                inferSchema=False,   # ALL columns → StringType, nothing dropped
             )
-            print(f"      Mode: explicit schema ({len(explicit_schema)} fields) from master_schema.json")
+            print(f"      Mode: all-string read ({len(df.columns)} cols from CSV header)")
         else:
-            # Unknown table or schema not in master_schema.json — infer types
+            # ── UNKNOWN TABLE: infer types so the Delta table gets
+            # meaningful schema on first write.
             df = spark.read.csv(
                 csv_file.path,
                 header=True,
                 inferSchema=True,
-                samplingRatio=0.25,   # 25% sample for better type accuracy
+                samplingRatio=0.25,
             )
             print(f"      Mode: inferred schema (table not in master_schema.json)")
 
@@ -376,8 +348,11 @@ for table_name in TABLES_TO_PROCESS:
                 "new_columns": [], "missing_columns": [], "type_changes": [],
             }
         else:
-            # When reading with explicit all-StringType schema, cast first
-            # so that drift detection sees the actual target types (not all "string").
+            # Cast BEFORE drift detection so detect_drift() compares real
+            # types (date, double, etc.) against the declared schema types.
+            # Unknown columns (not in master_schema.json) are untouched
+            # by cast_date_columns() and remain StringType — the drift
+            # detector will flag them correctly as new columns.
             df = cast_date_columns(df, table_name)
             drift = detect_drift(table_name, df)
             print(generate_drift_summary(drift))
@@ -458,18 +433,11 @@ for table_name in TABLES_TO_PROCESS:
                 report["notes"].append(msg)
                 log.info(f"[{table_name}] {msg}")
 
-        # ── STEP 4: Cast types (if not already done in STEP 3) ───────────
+        # ── STEP 4: Cast types (already done in STEP 3 for known tables) ─
         print(f"\n  [4/6] Casting column types …")
-        if table_name in known_tables and not drift["has_drift"]:
-            # If we already cast in STEP 3 (for known tables without drift),
-            # don't cast again. Only cast here for the "no drift" fast path
-            # where we skipped the early cast.
-            # Note: if build_spark_schema_from_master returned None (unknown table),
-            # cast_date_columns was not called yet — call it now.
-            if explicit_schema is None:
-                df = cast_date_columns(df, table_name)
-        elif table_name not in known_tables and explicit_schema is None:
-            pass  # unknown table, no schema to cast against
+        # cast_date_columns() was already called in STEP 3 for known tables.
+        # For unknown tables read with inferSchema=True, types are already
+        # inferred by Spark — no additional casting needed.
         print(f"      Types finalised")
 
         # ── STEP 5: Write Delta table ─────────────────────────────────────
@@ -545,6 +513,7 @@ for table_name in TABLES_TO_PROCESS:
     run_reports.append(report)
     print_table_report(report)
 
+
 # COMMAND ----------
 
 # =============================================================================
@@ -586,3 +555,8 @@ exit_payload = json.dumps({
     "dry_run": DRY_RUN,
 })
 dbutils.notebook.exit(exit_payload)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC

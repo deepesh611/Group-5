@@ -1,10 +1,10 @@
 # ================================
 # CONFIG
 # ================================
-bucket = "s3a://deep-group5-project-bucket"
-
-BASE_PATH = f"{bucket}/data/csv/"
-CATALOG = "`project-5`"
+storage_account = "project5data"
+container = "data"
+BASE_PATH = f"abfss://{container}@{storage_account}.dfs.core.windows.net/raw/"
+CATALOG = "deepcatalog"
 SCHEMA = "delta_tables"
 
 # Set context

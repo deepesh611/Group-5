@@ -73,6 +73,37 @@ def normalize_column_names(df):
     return df
 
 
+# def cast_date_columns(df, table_name: str):
+#     """
+#     Cast date/timestamp/numeric columns based on master_schema.json type
+#     declarations.  Applied after normalize_column_names() and before drift
+#     detection so Spark inferred types match what the schema declares.
+
+#     Only casts columns that are present in both the DataFrame and the schema;
+#     silently skips columns that exist in only one.
+#     """
+#     from pyspark.sql.functions import col, to_date, to_timestamp
+
+#     expected = get_expected_columns(table_name)
+
+#     for col_name, meta in expected.items():
+#         if col_name not in df.columns:
+#             continue
+#         t = meta["type"]
+#         try:
+#             if t == "date":
+#                 df = df.withColumn(col_name, to_date(col(col_name)))
+#             elif t == "timestamp":
+#                 df = df.withColumn(col_name, to_timestamp(col(col_name)))
+#             elif t == "double":
+#                 df = df.withColumn(col_name, col(col_name).cast("double"))
+#             elif t in ("long", "int"):
+#                 df = df.withColumn(col_name, col(col_name).cast(t))
+#         except Exception as e:
+#             log.warning(f"Type cast failed for '{col_name}' → '{t}': {e}")
+
+#     return df
+
 def cast_date_columns(df, table_name: str):
     """
     Cast date/timestamp/numeric columns based on master_schema.json type
@@ -81,8 +112,17 @@ def cast_date_columns(df, table_name: str):
 
     Only casts columns that are present in both the DataFrame and the schema;
     silently skips columns that exist in only one.
+
+    DATE FORMAT: Synthea outputs 'YYYY-MM-DD' (e.g. '1988-02-16').
+    TIMESTAMP FORMAT: Synthea outputs ISO 8601 with one of three suffix styles:
+        '2020-01-15T08:30:00Z'        (UTC with Z)
+        '2020-01-15T08:30:00+00:00'   (UTC with offset)
+        '2020-01-15T08:30:00'         (no zone)
+    Spark's DEFAULT to_timestamp() uses 'yyyy-MM-dd HH:mm:ss' which does NOT
+    match any of these — it silently returns null for every row.  We must
+    provide explicit format strings and coalesce() the results.
     """
-    from pyspark.sql.functions import col, to_date, to_timestamp
+    from pyspark.sql.functions import col, to_date, to_timestamp, coalesce
 
     expected = get_expected_columns(table_name)
 
@@ -92,17 +132,40 @@ def cast_date_columns(df, table_name: str):
         t = meta["type"]
         try:
             if t == "date":
-                df = df.withColumn(col_name, to_date(col(col_name)))
+                # Synthea date format is always ISO 8601 short: YYYY-MM-DD
+                df = df.withColumn(
+                    col_name,
+                    to_date(col(col_name), "yyyy-MM-dd"),
+                )
+
             elif t == "timestamp":
-                df = df.withColumn(col_name, to_timestamp(col(col_name)))
+                # Synthea timestamps come in three flavours — try all of them.
+                # coalesce() returns the first non-null result.
+                df = df.withColumn(
+                    col_name,
+                    coalesce(
+                        to_timestamp(col(col_name), "yyyy-MM-dd'T'HH:mm:ssXXX"),  # +00:00
+                        to_timestamp(col(col_name), "yyyy-MM-dd'T'HH:mm:ss'Z'"),  # Z literal
+                        to_timestamp(col(col_name), "yyyy-MM-dd'T'HH:mm:ss"),     # no zone
+                        to_timestamp(col(col_name), "yyyy-MM-dd HH:mm:ss"),       # space sep
+                    ),
+                )
+
             elif t == "double":
                 df = df.withColumn(col_name, col(col_name).cast("double"))
-            elif t in ("long", "int"):
-                df = df.withColumn(col_name, col(col_name).cast(t))
+
+            elif t in ("long", "int", "integer"):
+                df = df.withColumn(col_name, col(col_name).cast("long"))
+
+            elif t == "boolean":
+                # Synthea booleans appear as 'true'/'false' strings
+                df = df.withColumn(col_name, col(col_name).cast("boolean"))
+
         except Exception as e:
             log.warning(f"Type cast failed for '{col_name}' → '{t}': {e}")
 
     return df
+
 
 # COMMAND ----------
 

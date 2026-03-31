@@ -11,7 +11,7 @@
 # COMMAND ----------
 
 # ─── Unity Catalog
-CATALOG     = "project_5"
+CATALOG     = "project5"
 SCHEMA      = "delta_tables"
 FULL_SCHEMA = f"{CATALOG}.{SCHEMA}"
 
@@ -19,8 +19,8 @@ FULL_SCHEMA = f"{CATALOG}.{SCHEMA}"
 # Fill these in to match your Azure storage account and container.
 # These are used only for file I/O (master_schema.json, logs).
 # Delta tables are referenced via Unity Catalog (CATALOG.SCHEMA.table) only.
-ADLS_ACCOUNT_NAME = "project5storage"           # Your storage account name
-ADLS_CONTAINER    = "project5data"              # Your container name
+ADLS_ACCOUNT_NAME = "project5data"           # Your storage account name
+ADLS_CONTAINER    = "data"              # Your container name
 ADLS_BASE         = f"abfss://{ADLS_CONTAINER}@{ADLS_ACCOUNT_NAME}.dfs.core.windows.net"
 
 RAW_PATH           = f"{ADLS_BASE}/raw"
