@@ -227,7 +227,8 @@ if not _p3_early_exit:
         load_error = ve
 
     if load_error:
-        log.error(f"[P3] Drift event load failed: {load_error}")
+        err_str = str(load_error)
+        log.error(f"[P3] Drift event load failed: {err_str}")
         _p3_early_exit = True
         dbutils.notebook.exit(json.dumps({
             "status":         "error",
@@ -236,7 +237,7 @@ if not _p3_early_exit:
             "sql_fix":        "",
             "ddl_executed":   False,
             "schema_updated": False,
-            "reasoning":      str(load_error),
+            "reasoning":      err_str[:500] + ("..." if len(err_str) > 500 else ""),
         }))
 
 # COMMAND ----------
@@ -290,8 +291,8 @@ if not _p3_early_exit and DRIFT_REPORT is not None:
         error_trace = traceback.format_exc()
 
     if api_error:
-        err = f"AI Advisor call failed: {api_error}"
-        log.error(f"[P3] {err}\n{error_trace}")
+        err_str = f"AI Advisor call failed: {api_error}"
+        log.error(f"[P3] {err_str}\n{error_trace}")
         _p3_early_exit = True
         dbutils.notebook.exit(json.dumps({
             "status":         "error",
@@ -300,7 +301,7 @@ if not _p3_early_exit and DRIFT_REPORT is not None:
             "sql_fix":        "",
             "ddl_executed":   False,
             "schema_updated": False,
-            "reasoning":      err,
+            "reasoning":      err_str[:500] + ("..." if len(err_str) > 500 else ""),
         }))
 
 # COMMAND ----------
@@ -401,7 +402,8 @@ if not _p3_early_exit and AI_RECOMMENDATION is not None:
         is_valid_ddl = False
 
     if api_error:
-        log.error(f"[P3] Fatal error during DDL validation: {api_error}\n{traceback.format_exc()}")
+        err_str = f"Fatal error during DDL validation: {api_error}"
+        log.error(f"[P3] {err_str}\n{traceback.format_exc()}")
         _p3_early_exit = True
         dbutils.notebook.exit(json.dumps({
             "status":         "error",
@@ -410,7 +412,7 @@ if not _p3_early_exit and AI_RECOMMENDATION is not None:
             "sql_fix":        SQL_FIX,
             "ddl_executed":   False,
             "schema_updated": False,
-            "reasoning":      f"Fatal error during DDL validation: {api_error}",
+            "reasoning":      err_str[:500] + ("..." if len(err_str) > 500 else ""),
         }))
     elif not is_valid_ddl:
         log.error(f"[P3] AI-generated DDL failed validation: {validation_msg}")
@@ -623,8 +625,9 @@ if not _p3_early_exit and SHOULD_APPLY and SQL_FIX:
         print(f"  ⚠️  Column already exists (schema is already correct — treating as success)")
         DDL_EXECUTED = True
     elif ddl_error:
-        log.error(f"[P3] DDL execution failed: {ddl_error}\n{traceback.format_exc()}")
-        print(f"  ❌ DDL failed: {ddl_error}")
+        err_str = str(ddl_error)
+        log.error(f"[P3] DDL execution failed: {err_str}\n{traceback.format_exc()}")
+        print(f"  ❌ DDL failed: {err_str}")
         _p3_early_exit = True
         dbutils.notebook.exit(json.dumps({
             "status":         "error",
@@ -633,7 +636,7 @@ if not _p3_early_exit and SHOULD_APPLY and SQL_FIX:
             "sql_fix":        SQL_FIX,
             "ddl_executed":   False,
             "schema_updated": False,
-            "reasoning":      f"DDL execution failed: {ddl_error_msg}",
+            "reasoning":      f"DDL execution failed: {err_str[:400] + ('...' if len(err_str) > 400 else '')}",
         }))
 
 elif not _p3_early_exit and SHOULD_APPLY and not SQL_FIX:
