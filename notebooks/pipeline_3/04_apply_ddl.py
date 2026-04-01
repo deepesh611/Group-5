@@ -10,13 +10,19 @@
 # All non-additive strategies become safe no-ops here.
 
 # COMMAND ----------
+
 # MAGIC %run ../utils/00_config
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/05_advisor_state_manager
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/06_advisor_policy
 
 # COMMAND ----------
+
 import json
 
 
@@ -32,12 +38,15 @@ def _exit(result: dict, **task_values):
         _set_task_value(key, value)
     dbutils.notebook.exit(json.dumps(result))
 
+# COMMAND ----------
 
 dbutils.widgets.text("table_name", "", "Table name")
 dbutils.widgets.text("run_id", "", "Advisor run id")
 
 TABLE_NAME = dbutils.widgets.get("table_name").strip().lower()
 RUN_ID = dbutils.widgets.get("run_id").strip()
+
+# COMMAND ----------
 
 try:
     validation_artifact = read_advisor_artifact(RUN_ID, "03_validation", TABLE_NAME)

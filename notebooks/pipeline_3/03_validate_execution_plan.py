@@ -24,12 +24,6 @@
 
 # COMMAND ----------
 
-dbutils.jobs.taskValues.set("execution_strategy", execution_strategy)
-dbutils.jobs.taskValues.set("should_apply_ddl", should_apply_ddl)
-dbutils.jobs.taskValues.set("manual_review_required", manual_review_required)
-
-# COMMAND ----------
-
 import json
 
 
@@ -45,6 +39,7 @@ def _exit(result: dict, **task_values):
         _set_task_value(key, value)
     dbutils.notebook.exit(json.dumps(result))
 
+# COMMAND ----------
 
 dbutils.widgets.text("table_name", "", "Table name")
 dbutils.widgets.text("run_id", "", "Advisor run id")
@@ -53,6 +48,8 @@ dbutils.widgets.dropdown("run_mode", "autonomous", ["autonomous", "manual"], "Ru
 TABLE_NAME = dbutils.widgets.get("table_name").strip().lower()
 RUN_ID = dbutils.widgets.get("run_id").strip()
 RUN_MODE = dbutils.widgets.get("run_mode").strip().lower() or "autonomous"
+
+# COMMAND ----------
 
 try:
     intake = read_advisor_artifact(RUN_ID, "01_intake", TABLE_NAME)

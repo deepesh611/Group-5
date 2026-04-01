@@ -15,17 +15,26 @@
 # This is intentionally separate from the automated workflow.
 
 # COMMAND ----------
+
 # MAGIC %run ../utils/00_config
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/04_metadata_manager
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/05_advisor_state_manager
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/06_advisor_policy
 
 # COMMAND ----------
+
 import json
 
+# COMMAND ----------
 
 dbutils.widgets.text("table_name", "", "Table name")
 dbutils.widgets.text("run_id", "", "Advisor run id")
@@ -38,6 +47,8 @@ RUN_ID = dbutils.widgets.get("run_id").strip()
 DECISION = dbutils.widgets.get("approval_decision").strip().lower()
 OVERRIDE_SQL = dbutils.widgets.get("override_sql_fix").strip()
 OVERRIDE_NEW_JSON = dbutils.widgets.get("override_new_json").strip()
+
+# COMMAND ----------
 
 try:
     intake = read_advisor_artifact(RUN_ID, "01_intake", TABLE_NAME)

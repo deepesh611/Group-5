@@ -13,15 +13,22 @@
 #   action: merge_schema_fallback | manual_review_required | ""
 
 # COMMAND ----------
+
 # MAGIC %run ../utils/00_config
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/05_advisor_state_manager
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/06_advisor_policy
 
 # COMMAND ----------
+
 import json
 
+# COMMAND ----------
 
 dbutils.widgets.text("table_name", "", "Table name")
 dbutils.widgets.text("run_id", "", "Advisor run id")
@@ -29,12 +36,30 @@ dbutils.widgets.text("run_id", "", "Advisor run id")
 TABLE_NAME = dbutils.widgets.get("table_name").strip().lower()
 RUN_ID = dbutils.widgets.get("run_id").strip()
 
+# COMMAND ----------
+
 try:
     intake = read_advisor_artifact(RUN_ID, "01_intake", TABLE_NAME)
-    recommendation = read_advisor_artifact(RUN_ID, "02_recommendation", TABLE_NAME) if artifact_exists(RUN_ID, "02_recommendation", TABLE_NAME) else {}
-    validation_artifact = read_advisor_artifact(RUN_ID, "03_validation", TABLE_NAME) if artifact_exists(RUN_ID, "03_validation", TABLE_NAME) else {}
-    execution_artifact = read_advisor_artifact(RUN_ID, "04_execution", TABLE_NAME) if artifact_exists(RUN_ID, "04_execution", TABLE_NAME) else {"ddl_executed": False}
-    metadata_artifact = read_advisor_artifact(RUN_ID, "05_metadata", TABLE_NAME) if artifact_exists(RUN_ID, "05_metadata", TABLE_NAME) else {"schema_updated": False}
+    recommendation = (
+        read_advisor_artifact(RUN_ID, "02_recommendation", TABLE_NAME)
+        if artifact_exists(RUN_ID, "02_recommendation", TABLE_NAME)
+        else {}
+    )
+    validation_artifact = (
+        read_advisor_artifact(RUN_ID, "03_validation", TABLE_NAME)
+        if artifact_exists(RUN_ID, "03_validation", TABLE_NAME)
+        else {}
+    )
+    execution_artifact = (
+        read_advisor_artifact(RUN_ID, "04_execution", TABLE_NAME)
+        if artifact_exists(RUN_ID, "04_execution", TABLE_NAME)
+        else {"ddl_executed": False}
+    )
+    metadata_artifact = (
+        read_advisor_artifact(RUN_ID, "05_metadata", TABLE_NAME)
+        if artifact_exists(RUN_ID, "05_metadata", TABLE_NAME)
+        else {"schema_updated": False}
+    )
 
     drift = intake.get("drift", {})
     rec = recommendation.get("recommendation", {})
@@ -43,7 +68,11 @@ try:
     ddl_executed = bool(execution_artifact.get("ddl_executed", False))
     schema_updated = bool(metadata_artifact.get("schema_updated", False))
     severity = rec.get("SEVERITY", drift.get("severity", "UNKNOWN"))
-    reasoning = rec.get("REASONING", "") or metadata_artifact.get("reason", "") or execution_artifact.get("reason", "")
+    reasoning = (
+        rec.get("REASONING", "")
+        or metadata_artifact.get("reason", "")
+        or execution_artifact.get("reason", "")
+    )
 
     action = ""
     if strategy == Strategy.NO_ACTION:

@@ -10,15 +10,23 @@
 # This task owns master_schema.json mutation.
 
 # COMMAND ----------
+
 # MAGIC %run ../utils/00_config
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/04_metadata_manager
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/05_advisor_state_manager
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/06_advisor_policy
 
 # COMMAND ----------
+
 import json
 from datetime import datetime
 
@@ -53,6 +61,7 @@ def _flag_missing_columns_in_schema(table_name: str, missing_cols: list, reasoni
         invalidate_cache()
     return True
 
+# COMMAND ----------
 
 dbutils.widgets.text("table_name", "", "Table name")
 dbutils.widgets.text("run_id", "", "Advisor run id")
@@ -60,10 +69,16 @@ dbutils.widgets.text("run_id", "", "Advisor run id")
 TABLE_NAME = dbutils.widgets.get("table_name").strip().lower()
 RUN_ID = dbutils.widgets.get("run_id").strip()
 
+# COMMAND ----------
+
 try:
     intake = read_advisor_artifact(RUN_ID, "01_intake", TABLE_NAME)
     validation_artifact = read_advisor_artifact(RUN_ID, "03_validation", TABLE_NAME)
-    execution_artifact = read_advisor_artifact(RUN_ID, "04_execution", TABLE_NAME) if artifact_exists(RUN_ID, "04_execution", TABLE_NAME) else {"status": "skipped", "ddl_executed": False}
+    execution_artifact = (
+        read_advisor_artifact(RUN_ID, "04_execution", TABLE_NAME)
+        if artifact_exists(RUN_ID, "04_execution", TABLE_NAME)
+        else {"status": "skipped", "ddl_executed": False}
+    )
 
     drift = intake["drift"]
     rec = validation_artifact.get("recommendation", {})

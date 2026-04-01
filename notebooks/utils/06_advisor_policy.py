@@ -76,9 +76,13 @@ def extract_added_columns(sql_fix: str) -> List[str]:
     inner = m.group(1).strip()
     cols = []
     for piece in _split_columns_payload(inner):
-        name_match = re.match(r"^`?([A-Za-z_][\w]*)`?\s+", piece)
+        # Two alternates:
+        #   1. Backtick-quoted: `any-chars-including-hyphens` — group 1
+        #   2. Bare identifier: starts with letter/underscore, word chars only — group 2
+        name_match = re.match(r"^`([^`]+)`\s+|^([A-Za-z_]\w*)\s+", piece)
         if name_match:
-            cols.append(name_match.group(1).lower())
+            name = name_match.group(1) if name_match.group(1) is not None else name_match.group(2)
+            cols.append(name.lower())
     return cols
 
 

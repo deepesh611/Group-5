@@ -31,16 +31,6 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text("run_id", "")
-dbutils.widgets.text("table_name", "")
-
-run_id = dbutils.widgets.get("run_id")
-table_name = dbutils.widgets.get("table_name")
-
-dbutils.jobs.taskValues.set("recommendation_ready", True)
-
-# COMMAND ----------
-
 import json
 
 
@@ -56,12 +46,15 @@ def _exit(result: dict, **task_values):
         _set_task_value(key, value)
     dbutils.notebook.exit(json.dumps(result))
 
+# COMMAND ----------
 
 dbutils.widgets.text("table_name", "", "Table name")
 dbutils.widgets.text("run_id", "", "Advisor run id")
 
 TABLE_NAME = dbutils.widgets.get("table_name").strip().lower()
 RUN_ID = dbutils.widgets.get("run_id").strip()
+
+# COMMAND ----------
 
 try:
     intake = read_advisor_artifact(RUN_ID, "01_intake", TABLE_NAME)

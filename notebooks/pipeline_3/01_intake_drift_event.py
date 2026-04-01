@@ -12,18 +12,6 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text("table_name", "")
-dbutils.widgets.text("drift_event", "{}")
-dbutils.widgets.text("trigger_source", "manual")
-dbutils.widgets.text("run_mode", "autonomous")
-
-table_name = dbutils.widgets.get("table_name")
-drift_event = dbutils.widgets.get("drift_event")
-trigger_source = dbutils.widgets.get("trigger_source")
-run_mode = dbutils.widgets.get("run_mode")
-
-# COMMAND ----------
-
 # MAGIC %run ../utils/00_config
 
 # COMMAND ----------
@@ -78,6 +66,7 @@ def _load_drift(table_name: str, raw_json: str) -> dict:
     payload = json.loads(raw)
     return payload.get("drift", payload)
 
+# COMMAND ----------
 
 dbutils.widgets.text("table_name", "", "Table name")
 dbutils.widgets.text("drift_event", "", "Drift JSON")
@@ -90,6 +79,8 @@ TRIGGER_SOURCE = dbutils.widgets.get("trigger_source").strip() or "pipeline1"
 RUN_MODE = dbutils.widgets.get("run_mode").strip().lower() or "autonomous"
 
 init_catalog()
+
+# COMMAND ----------
 
 try:
     if not TABLE_NAME:
@@ -149,10 +140,3 @@ except Exception as e:
             "intake_status": "error",
         },
     })
-
-# COMMAND ----------
-
-# after you compute them:
-dbutils.jobs.taskValues.set("run_id", run_id)
-dbutils.jobs.taskValues.set("table_name", table_name)
-dbutils.jobs.taskValues.set("has_drift", has_drift)
