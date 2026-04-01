@@ -348,20 +348,18 @@ for table_name in TABLES_TO_PROCESS:
 
         if table_name in known_tables:
             # KNOWN TABLE — read all columns as StringType.
-            # This preserves drift columns (new CSV fields not yet in
-            # master_schema.json) so detect_drift() can see them.
-            # cast_date_columns() converts known columns to their declared
-            # types in STEP 3.
+            # inferSchema=False preserves drift columns (new CSV fields not yet
+            # in master_schema.json) so detect_drift() can see them.
+            # cast_date_columns() converts known columns in STEP 3.
             df = spark.read.csv(
                 csv_file.path,
                 header=True,
-                inferSchema=False,   # ALL columns → StringType, nothing dropped
-                multiLine=False,     # Synthea CSVs are single-line-per-row
+                inferSchema=False,
+                multiLine=False,
             )
             print(f"      Mode: all-string read ({len(df.columns)} cols from CSV header)")
         else:
-            # UNKNOWN TABLE — infer types because we have no declared schema
-            # to cast against. These tables will have no drift check.
+            # UNKNOWN TABLE — infer types; no declared schema to cast against.
             df = spark.read.csv(
                 csv_file.path,
                 header=True,
@@ -384,7 +382,6 @@ for table_name in TABLES_TO_PROCESS:
         print(f"\n  [3/6] Type casting & schema drift check …")
 
         if table_name not in known_tables:
-            # Unknown table: no schema to cast against, skip drift check
             msg = (
                 f"Table '{table_name}' not in master_schema.json. "
                 f"Drift check skipped — table will be written with CSV schema."
@@ -396,20 +393,14 @@ for table_name in TABLES_TO_PROCESS:
                 "new_columns": [], "missing_columns": [], "type_changes": [],
             }
         else:
-            # Cast known columns to declared types using safe try_to_date /
-            # try_to_timestamp — malformed values become NULL, never crash.
-            # Unknown columns remain StringType for drift detection.
             df = cast_date_columns(df, table_name)
 
-            # Audit: warn about any date/numeric columns that became NULL
-            # after casting (indicates malformed values in the source CSV).
-            # This is purely informational — the pipeline continues.
-            expected_cols = get_expected_columns(table_name)
+            expected_cols  = get_expected_columns(table_name)
             castable_types = {"date", "timestamp", "double", "long", "int", "integer", "boolean"}
             for c_name, c_meta in expected_cols.items():
                 if c_meta["type"] in castable_types and c_name in df.columns:
                     null_pct = df.filter(col(c_name).isNull()).count() / max(source_row_count, 1) * 100
-                    if null_pct > 0.1:  # more than 0.1% nulls in a cast column → warn
+                    if null_pct > 0.1:
                         warn_msg = (
                             f"Column '{c_name}' ({c_meta['type']}): "
                             f"{null_pct:.1f}% rows are NULL after casting. "
@@ -424,6 +415,12 @@ for table_name in TABLES_TO_PROCESS:
             report["drift_severity"] = drift["severity"]
 
         # ── Handle drift ─────────────────────────────────────────────────
+        # skip_table=True means this table is done for this run (either
+        # handed off to P3, written via fallback, or skipped intentionally).
+        # The `continue` at the bottom of each skip_table=True branch jumps
+        # directly to the next table — bypassing steps 4-6 AND the
+        # run_reports.append() at the very bottom (those branches append
+        # themselves before setting skip_table=True).
         skip_table = False
 
         if drift["has_drift"]:
@@ -431,6 +428,7 @@ for table_name in TABLES_TO_PROCESS:
 
             if drift["severity"] == "CRITICAL":
                 if ON_CRITICAL_DRIFT == "fallback":
+                    # Widget set to "fallback" — skip P3, proceed without enforcement
                     msg = (
                         f"CRITICAL drift on '{table_name}' — "
                         f"proceeding without schema enforcement. "
@@ -439,12 +437,16 @@ for table_name in TABLES_TO_PROCESS:
                     log.warning(f"[{table_name}] {msg}")
                     report["notes"].append(msg)
                     report["drift_severity"] = "CRITICAL"
+                    # Falls through to steps 4-6 (write proceeds)
 
                 else:  # ON_CRITICAL_DRIFT == "halt" (default)
                     print(f"\n  🚨 CRITICAL drift — triggering AI Advisor (Pipeline 3) …")
                     p3_result = trigger_pipeline_3(table_name, drift)
 
                     if p3_result.get("status") == "fix_applied":
+                        # ── P3 applied a DDL fix (additive drift) ────────────────
+                        # Schema is now correct on the Delta side. P1 must re-run
+                        # this table to pick up the updated schema from master_schema.json.
                         msg = (
                             f"Pipeline 3 fix applied for '{table_name}'. "
                             f"Re-run ingestion for this table to pick up the fixed schema."
@@ -456,45 +458,137 @@ for table_name in TABLES_TO_PROCESS:
                         report["error"]  = "CRITICAL drift — P3 fix applied; re-run required"
                         run_reports.append(report)
                         print_table_report(report)
-                        skip_table = True
+                        continue  # ← jump to next table, skip steps 4-6
+
+                    elif p3_result.get("status") == "advisory":
+                        # ── P3 advisory: subtractive drift, no DDL possible ───────
+                        # A column is missing from the incoming CSV but still exists
+                        # in the Delta table. P3 has flagged it in master_schema.json
+                        # with source_status="missing_from_upstream".
+                        #
+                        # Strategy: write the incoming data with mergeSchema=True.
+                        # Delta keeps the existing column definition; new rows get
+                        # NULL for the missing column. No data is lost from the table.
+                        # The missing column is documented for human review.
+                        missing = p3_result.get("missing_columns", [])
+                        msg = (
+                            f"P3 advisory for '{table_name}': no DDL executed. "
+                            f"Missing column(s): {missing}. "
+                            f"Using mergeSchema fallback — column stays in Delta as NULL for new rows."
+                        )
+                        log.warning(f"[{table_name}] {msg}")
+                        report["notes"].append(msg)
+                        report["drift_severity"] = "CRITICAL"
+                        report["status"] = "fallback"
+                        print(f"\n  ⚠️  {msg}")
+
+                        if not DRY_RUN:
+                            print(f"\n  [mergeSchema fallback] Writing '{table_name}' …")
+                            full_table_name = get_full_table_name(table_name)
+                            tmp_view = f"_p1_advisory_fallback_{table_name}_{int(time.time())}"
+                            df.createOrReplaceTempView(tmp_view)
+                            fallback_write_error = None
+                            try:
+                                # INSERT OVERWRITE preserves the Delta schema (keeps the
+                                # missing column in the table definition) and overwrites
+                                # data rows. Missing column becomes NULL for all new rows.
+                                spark.sql(f"""
+                                    INSERT OVERWRITE TABLE {full_table_name}
+                                    SELECT * FROM {tmp_view}
+                                """)
+                                log.info(f"[{table_name}] INSERT OVERWRITE succeeded (advisory fallback)")
+                            except Exception as insert_err:
+                                log.warning(
+                                    f"[{table_name}] INSERT OVERWRITE failed ({insert_err}), "
+                                    f"trying saveAsTable with mergeSchema …"
+                                )
+                                try:
+                                    (
+                                        df.write
+                                        .format("delta")
+                                        .mode("overwrite")
+                                        .option("mergeSchema", "true")
+                                        .option("overwriteSchema", "false")
+                                        .saveAsTable(full_table_name)
+                                    )
+                                    log.info(f"[{table_name}] saveAsTable mergeSchema fallback succeeded")
+                                except Exception as save_err:
+                                    fallback_write_error = save_err
+                                    log.error(f"[{table_name}] mergeSchema fallback write failed: {save_err}")
+                            finally:
+                                try:
+                                    spark.catalog.dropTempView(tmp_view)
+                                except Exception:
+                                    pass
+
+                            if fallback_write_error:
+                                report["status"] = "failed"
+                                report["error"]  = f"Advisory fallback write failed: {fallback_write_error}"
+                                print(f"  ❌ Fallback write failed: {fallback_write_error}")
+                            else:
+                                final_count = spark.sql(
+                                    f"SELECT COUNT(*) AS n FROM {full_table_name}"
+                                ).collect()[0]["n"]
+                                report["row_count"] = final_count
+                                print(f"  ✅ Fallback write complete — {final_count:,} rows")
+
+                        run_reports.append(report)
+                        print_table_report(report)
+                        continue  # ← jump to next table, skip steps 4-6
+
+                    elif p3_result.get("status") == "no_fix_needed":
+                        # ── P3 confirmed drift is compatible ─────────────────────
+                        # e.g. type widening that the AI assessed as safe.
+                        # Normal write proceeds through steps 4-6.
+                        msg = (
+                            f"P3 confirmed no fix needed for '{table_name}' "
+                            f"(drift is compatible). Proceeding with normal write."
+                        )
+                        log.info(f"[{table_name}] {msg}")
+                        report["notes"].append(msg)
+                        # skip_table stays False — fall through to steps 4-6
 
                     elif p3_result.get("status") == "fix_declined":
+                        # ── Human declined the AI fix (interactive mode) ──────────
                         msg = f"Human declined AI fix for '{table_name}'. Table skipped."
                         log.warning(f"[{table_name}] {msg}")
                         report["status"] = "skipped"
                         report["error"]  = msg
                         run_reports.append(report)
                         print_table_report(report)
-                        skip_table = True
+                        continue  # ← jump to next table, skip steps 4-6
 
                     else:
-                        # P3 error or timeout — warn and continue (don't block all tables)
+                        # ── Unrecognised P3 status or actual error ────────────────
+                        # Do NOT attempt to write — schema state is unknown.
+                        p3_status = p3_result.get("status", "unknown")
+                        p3_reason = p3_result.get("reasoning", "no reasoning provided")
                         msg = (
-                            f"Pipeline 3 could not resolve drift for '{table_name}' "
-                            f"({p3_result.get('status', 'unknown')}). "
-                            f"Proceeding with current schema."
+                            f"Pipeline 3 returned unresolved status '{p3_status}' "
+                            f"for '{table_name}'. Reason: {p3_reason[:200]}. "
+                            f"Table skipped to prevent corrupt write."
                         )
-                        log.warning(f"[{table_name}] {msg}")
-                        report["notes"].append(msg)
+                        log.error(f"[{table_name}] {msg}")
+                        report["status"] = "skipped"
+                        report["error"]  = msg
+                        run_reports.append(report)
+                        print_table_report(report)
+                        continue  # ← jump to next table, skip steps 4-6
 
             elif drift["severity"] == "WARNING":
-                # WARNING: new columns detected — log for P3 review.
-                # We do NOT block the full run for a WARNING; drift is logged
-                # to ADLS /logs/drift/ for P3 to process separately.
                 msg = (
                     f"WARNING drift on '{table_name}' — new/changed columns. "
                     f"Drift logged to ADLS. Run Pipeline 3 manually for review."
                 )
                 log.warning(f"[{table_name}] {msg}")
                 report["notes"].append(msg)
+                # Falls through to steps 4-6 (write proceeds with warning noted)
 
             elif drift["severity"] == "INFO":
                 msg = f"INFO drift on '{table_name}' — compatible type widening, proceeding."
                 report["notes"].append(msg)
                 log.info(f"[{table_name}] {msg}")
-
-        if skip_table:
-            continue
+                # Falls through to steps 4-6
 
         # ── STEP 4: Log cast summary ──────────────────────────────────────
         print(f"\n  [4/6] Cast summary …")
@@ -519,16 +613,13 @@ for table_name in TABLES_TO_PROCESS:
             report["notes"].append("Dry run — no write performed")
             run_reports.append(report)
             print_table_report(report)
-            continue
+            continue  # ← jump to next table
 
         print(f"\n  [5/6] Writing Delta table → {full_table_name}")
         print(f"      Strategy: CREATE OR REPLACE TABLE (schema always fresh)")
 
         final_count = write_delta_table(df, table_name)
 
-        # Row count sanity check: CORT preserves every row, including those
-        # that became NULL after date casting. If counts differ, it indicates
-        # a genuine write problem (I/O error, cluster issue, etc.).
         if final_count != source_row_count:
             msg = (
                 f"Row count mismatch after write: "
@@ -579,6 +670,8 @@ for table_name in TABLES_TO_PROCESS:
         except Exception:
             pass
 
+    # Only reaches here for the normal success/failure/warning path.
+    # All skip_table branches use `continue` above and bypass this append.
     run_reports.append(report)
     print_table_report(report)
 
