@@ -88,6 +88,38 @@ try:
         status = "error"
         action = "manual_review_required"
 
+    # ─── Rich summary for demo visibility ────────────────────────────────
+    status_icons = {
+        "fix_applied": "✅", "advisory": "📝", "no_fix_needed": "✅",
+        "error": "❌",
+    }
+    icon = status_icons.get(status, "❓")
+    print(f"\n{'═'*70}")
+    print(f"  {icon}  PIPELINE 3 — AI ADVISOR FINAL SUMMARY")
+    print(f"{'═'*70}")
+    print(f"  Table:              {TABLE_NAME}")
+    print(f"  Run ID:             {RUN_ID}")
+    print(f"  Final Status:       {status.upper()}")
+    print(f"  Execution Strategy: {strategy}")
+    print(f"  Severity:           {severity}")
+    print(f"{'─'*70}")
+    print(f"  🤖 AI ADVISOR DECISION CHAIN:")
+    print(f"     1️⃣  Intake:        drift_kind = {validation.get('drift_kind', intake.get('drift_kind', '?'))}")
+    print(f"     2️⃣  AI Generated:  SQL_FIX = {'(present)' if rec.get('SQL_FIX') else '(empty)'}")
+    print(f"                        NEW_JSON = {len(rec.get('NEW_JSON', {}) or {})} column(s)")
+    print(f"     3️⃣  Validated:     strategy = {strategy}, validation_ok = {validation.get('validation_ok', '?')}")
+    print(f"     4️⃣  DDL Applied:   {ddl_executed}")
+    if rec.get('SQL_FIX'):
+        print(f"                        {rec['SQL_FIX']}")
+    print(f"     5️⃣  Schema Updated: {schema_updated}")
+    if metadata_artifact.get('reason'):
+        print(f"                        {metadata_artifact['reason']}")
+    print(f"{'─'*70}")
+    print(f"  💬 REASONING: {reasoning}")
+    if action:
+        print(f"  ⚠️  ACTION: {action}")
+    print(f"{'═'*70}\n")
+
     final_payload = {
         "status": status,
         "table": TABLE_NAME,

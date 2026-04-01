@@ -246,7 +246,9 @@ def _classify_overall_severity(drift: dict) -> str:
     Derive overall severity from individual drift items.
 
     CRITICAL — any missing column OR a type change on a PHI column
-    WARNING  — new columns (possible PHI) or type changes on non-PHI columns
+              OR new columns (unknown provenance = potential PHI; the AI Advisor
+              will evaluate and classify them)
+    WARNING  — type changes on non-PHI columns
     INFO     — fallback (should not normally reach here if has_drift is True)
     """
     if drift["missing_columns"]:
@@ -254,7 +256,10 @@ def _classify_overall_severity(drift: dict) -> str:
     for tc in drift["type_changes"]:
         if tc.get("is_phi", False):
             return "CRITICAL"
-    if drift["new_columns"] or drift["type_changes"]:
+    if drift["new_columns"]:
+        # unknown columns may contain PHI — require Advisor review
+        return "CRITICAL"
+    if drift["type_changes"]:
         return "WARNING"
     return "INFO"
 

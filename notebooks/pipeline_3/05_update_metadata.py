@@ -88,25 +88,53 @@ try:
     schema_updated = False
     status = "skipped"
     reason = "No metadata action required"
+    columns_merged = []
+    columns_flagged = []
+
+    print(f"\n{'═'*70}")
+    print(f"  📁 METADATA UPDATE — {TABLE_NAME.upper()}")
+    print(f"{'═'*70}")
+    print(f"  Strategy:     {strategy}")
+    print(f"  DDL executed: {execution_artifact.get('ddl_executed', False)}")
+    print(f"{'─'*70}")
 
     if strategy == Strategy.AUTO_APPLY_DDL and execution_artifact.get("ddl_executed"):
         new_json = rec.get("NEW_JSON", {}) or {}
         if new_json:
+            print(f"  🔄 Merging {len(new_json)} AI-defined column(s) into master_schema.json:")
+            for col_name, col_def in new_json.items():
+                phi_flag = " ⛔ PHI" if col_def.get("phi") else ""
+                print(f"     + {col_name} ({col_def.get('type', '?')}){phi_flag}")
+                print(f"       desc: {col_def.get('description', '')}")
             update_table_columns(TABLE_NAME, new_json)
             invalidate_cache()
             schema_updated = True
+            columns_merged = list(new_json.keys())
             status = "ok"
             reason = f"Merged {len(new_json)} new column(s) into master_schema.json"
+            print(f"  ✅ master_schema.json updated successfully!")
 
     elif strategy == Strategy.METADATA_ONLY:
-        _flag_missing_columns_in_schema(TABLE_NAME, drift.get("missing_columns", []), rec.get("REASONING", ""))
+        missing = drift.get('missing_columns', [])
+        print(f"  📝 Flagging {len(missing)} missing column(s) in master_schema.json:")
+        for m in missing:
+            print(f"     − {m['column']} ({m.get('expected_type', '?')})")
+        _flag_missing_columns_in_schema(TABLE_NAME, missing, rec.get("REASONING", ""))
         schema_updated = True
+        columns_flagged = [m["column"] for m in missing]
         status = "ok"
-        reason = f"Flagged {len(drift.get('missing_columns', []))} missing column(s) in master_schema.json"
+        reason = f"Flagged {len(missing)} missing column(s) in master_schema.json"
+        print(f"  ✅ Missing columns flagged with source_status=missing_from_upstream")
 
     elif strategy == Strategy.ADVISORY_ONLY:
         status = "ok"
         reason = "Advisory-only drift — no schema mutation required"
+        print(f"  💡 Advisory-only — no changes to master_schema.json")
+
+    else:
+        print(f"  ⏭️  No metadata action for strategy: {strategy}")
+
+    print(f"{'═'*70}\n")
 
     artifact_path = write_advisor_artifact(
         RUN_ID,
@@ -127,6 +155,9 @@ try:
             "table": TABLE_NAME,
             "run_id": RUN_ID,
             "schema_updated": schema_updated,
+            "strategy": strategy,
+            "columns_merged": columns_merged,
+            "columns_flagged": columns_flagged,
             "reason": reason,
             "artifact_path": artifact_path,
         },

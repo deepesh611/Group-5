@@ -90,6 +90,7 @@ try:
         "execution_strategy": validation["execution_strategy"],
         "validation_ok": str(bool(validation["validation_ok"])).lower(),
         "should_apply_ddl": str(validation["execution_strategy"] == "AUTO_APPLY_DDL").lower(),
+        "manual_review_required": str(validation["execution_strategy"] == "MANUAL_REVIEW").lower(),
     }
 except Exception as e:
     write_advisor_artifact(
@@ -104,6 +105,7 @@ except Exception as e:
         "execution_strategy": Strategy.MANUAL_REVIEW,
         "validation_ok": "false",
         "should_apply_ddl": "false",
+        "manual_review_required": "true",
     }
 
 _exit(_result, **_task_vals)

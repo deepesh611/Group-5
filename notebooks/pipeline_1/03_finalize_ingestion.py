@@ -43,7 +43,10 @@ print(f"{'─'*70}")
 # COMMAND ----------
 
 manifest = read_preflight_manifest(RUN_ID)
-write_results = read_write_results(RUN_ID)
+try:
+    write_results = read_write_results(RUN_ID)
+except Exception:
+    write_results = {"writes": []}
 
 manifest_by_table = {e["table"]: e for e in manifest["entries"]}
 final_reports = []
