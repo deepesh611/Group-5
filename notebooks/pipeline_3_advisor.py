@@ -214,6 +214,7 @@ def load_drift_event(table_name: str, raw_json: str) -> dict:
 
 
 if not _p3_early_exit:
+    load_error = None
     try:
         DRIFT_REPORT = load_drift_event(TABLE_NAME, DRIFT_JSON)
         print(f"\n  Drift report loaded:")
@@ -223,7 +224,10 @@ if not _p3_early_exit:
         print(f"    missing:     {len(DRIFT_REPORT.get('missing_columns', []))}")
         print(f"    type_chg:    {len(DRIFT_REPORT.get('type_changes', []))}")
     except Exception as ve:
-        log.error(f"[P3] Drift event load failed: {ve}")
+        load_error = ve
+
+    if load_error:
+        log.error(f"[P3] Drift event load failed: {load_error}")
         _p3_early_exit = True
         dbutils.notebook.exit(json.dumps({
             "status":         "error",
@@ -232,7 +236,7 @@ if not _p3_early_exit:
             "sql_fix":        "",
             "ddl_executed":   False,
             "schema_updated": False,
-            "reasoning":      str(ve),
+            "reasoning":      str(load_error),
         }))
 
 # COMMAND ----------
@@ -267,17 +271,27 @@ if not _p3_early_exit and DRIFT_REPORT is not None:
 if not _p3_early_exit and DRIFT_REPORT is not None:
     print(f"\n  Calling AI Advisor (GPT-4o) …")
     print(f"  Drift severity: {DRIFT_REPORT.get('severity', 'UNKNOWN')}")
+    api_error   = None
+    error_trace = ""
     try:
         AI_RECOMMENDATION = get_advisor_recommendation(DRIFT_REPORT, TABLE_NAME)
         print(f"  AI response received:")
-        print(f"    SEVERITY:  {AI_RECOMMENDATION['SEVERITY']}")
-        print(f"    SQL_FIX:   {AI_RECOMMENDATION['SQL_FIX'][:120] if AI_RECOMMENDATION['SQL_FIX'] else '(none — advisory only)'}")
-        print(f"    NEW_JSON:  {list(AI_RECOMMENDATION['NEW_JSON'].keys())}")
-        print(f"    REASONING: {AI_RECOMMENDATION['REASONING'][:150]}…")
+        sql_fix_safe  = str(AI_RECOMMENDATION.get('SQL_FIX') or "")
+        __raw_new     = AI_RECOMMENDATION.get('NEW_JSON')
+        new_json_safe = __raw_new if isinstance(__raw_new, dict) else {}
+        reason_safe   = str(AI_RECOMMENDATION.get('REASONING') or "")
+        
+        print(f"    SEVERITY:  {AI_RECOMMENDATION.get('SEVERITY', 'UNKNOWN')}")
+        print(f"    SQL_FIX:   {sql_fix_safe[:120] if sql_fix_safe else '(none — advisory only)'}")
+        print(f"    NEW_JSON:  {list(new_json_safe.keys())}")
+        print(f"    REASONING: {reason_safe[:150]}…")
     except Exception as e:
-        err = f"AI Advisor call failed: {e}"
-        log.error(f"[P3] {err}")
-        log.error(traceback.format_exc())
+        api_error   = e
+        error_trace = traceback.format_exc()
+
+    if api_error:
+        err = f"AI Advisor call failed: {api_error}"
+        log.error(f"[P3] {err}\n{error_trace}")
         _p3_early_exit = True
         dbutils.notebook.exit(json.dumps({
             "status":         "error",
@@ -370,17 +384,35 @@ def validate_advisor_ddl(sql_fix: str, table_name: str, run_mode: str) -> tuple:
 
 
 if not _p3_early_exit and AI_RECOMMENDATION is not None:
-    SQL_FIX      = AI_RECOMMENDATION["SQL_FIX"].strip()
+    # Rely on 03_openai_client.py's strict unbreachable type boundaries
+    SQL_FIX      = AI_RECOMMENDATION["SQL_FIX"]
     NEW_JSON     = AI_RECOMMENDATION["NEW_JSON"]
     AI_SEVERITY  = AI_RECOMMENDATION["SEVERITY"]
     AI_REASONING = AI_RECOMMENDATION["REASONING"]
 
-    is_valid_ddl, validation_msg = validate_advisor_ddl(SQL_FIX, TABLE_NAME, RUN_MODE)
+    api_error = None
+    try:
+        is_valid_ddl, validation_msg = validate_advisor_ddl(SQL_FIX, TABLE_NAME, RUN_MODE)
+        print(f"\n  DDL Validation: {'✅ PASSED' if is_valid_ddl else '❌ FAILED'}")
+        print(f"    Reason: {validation_msg}")
+    except Exception as e:
+        api_error = e
+        validation_msg = str(e)
+        is_valid_ddl = False
 
-    print(f"\n  DDL Validation: {'✅ PASSED' if is_valid_ddl else '❌ FAILED'}")
-    print(f"    Reason: {validation_msg}")
-
-    if not is_valid_ddl:
+    if api_error:
+        log.error(f"[P3] Fatal error during DDL validation: {api_error}\n{traceback.format_exc()}")
+        _p3_early_exit = True
+        dbutils.notebook.exit(json.dumps({
+            "status":         "error",
+            "table":          TABLE_NAME,
+            "severity":       AI_SEVERITY,
+            "sql_fix":        SQL_FIX,
+            "ddl_executed":   False,
+            "schema_updated": False,
+            "reasoning":      f"Fatal error during DDL validation: {api_error}",
+        }))
+    elif not is_valid_ddl:
         log.error(f"[P3] AI-generated DDL failed validation: {validation_msg}")
         log.error(f"[P3] Rejected DDL: {SQL_FIX}")
         _p3_early_exit = True
@@ -489,9 +521,17 @@ if not _p3_early_exit and AI_RECOMMENDATION is not None:
     print(f"\n  Reasoning (excerpt):\n  {AI_REASONING[:300]}{'…' if len(AI_REASONING) > 300 else ''}")
     print(f"{'='*65}")
 
+    render_error = None
     if RUN_MODE == "interactive":
-        displayHTML(render_recommendation_html(TABLE_NAME, DRIFT_REPORT, AI_RECOMMENDATION))
-        print("\n  ⏸️  INTERACTIVE MODE — set approval_decision widget and re-run from Cell 9.")
+        try:
+            html = render_recommendation_html(TABLE_NAME, DRIFT_REPORT, AI_RECOMMENDATION)
+            displayHTML(html)
+            print("\n  ⏸️  INTERACTIVE MODE — set approval_decision widget and re-run from Cell 9.")
+        except Exception as e:
+            render_error = e
+    
+    if render_error:
+        print(f"\n  ⚠️ Failed to render rich HTML card: {render_error}")
 
 # COMMAND ----------
 
@@ -549,6 +589,10 @@ if not _p3_early_exit and SHOULD_APPLY and SQL_FIX:
     print(f"\n  Executing DDL on {full_table_name}:")
     print(f"  {SQL_FIX}\n")
 
+    ddl_error = None
+    ddl_error_msg = ""
+    is_idempotent = False
+
     try:
         spark.sql(SQL_FIX)
         DDL_EXECUTED = True
@@ -569,24 +613,28 @@ if not _p3_early_exit and SHOULD_APPLY and SQL_FIX:
     except Exception as e:
         err_str = str(e)
         if "already exists" in err_str.lower():
-            # Idempotent — column was already added (e.g. re-run after partial failure)
-            log.warning(f"[P3] Column already exists — DDL is idempotent: {e}")
-            print(f"  ⚠️  Column already exists (schema is already correct — treating as success)")
-            DDL_EXECUTED = True
+            is_idempotent = True
         else:
-            log.error(f"[P3] DDL execution failed: {e}")
-            log.error(traceback.format_exc())
-            print(f"  ❌ DDL failed: {e}")
-            _p3_early_exit = True
-            dbutils.notebook.exit(json.dumps({
-                "status":         "error",
-                "table":          TABLE_NAME,
-                "severity":       AI_SEVERITY,
-                "sql_fix":        SQL_FIX,
-                "ddl_executed":   False,
-                "schema_updated": False,
-                "reasoning":      f"DDL execution failed: {err_str}",
-            }))
+            ddl_error = e
+            ddl_error_msg = err_str
+
+    if is_idempotent:
+        log.warning(f"[P3] Column already exists — DDL is idempotent: {err_str}")
+        print(f"  ⚠️  Column already exists (schema is already correct — treating as success)")
+        DDL_EXECUTED = True
+    elif ddl_error:
+        log.error(f"[P3] DDL execution failed: {ddl_error}\n{traceback.format_exc()}")
+        print(f"  ❌ DDL failed: {ddl_error}")
+        _p3_early_exit = True
+        dbutils.notebook.exit(json.dumps({
+            "status":         "error",
+            "table":          TABLE_NAME,
+            "severity":       AI_SEVERITY,
+            "sql_fix":        SQL_FIX,
+            "ddl_executed":   False,
+            "schema_updated": False,
+            "reasoning":      f"DDL execution failed: {ddl_error_msg}",
+        }))
 
 elif not _p3_early_exit and SHOULD_APPLY and not SQL_FIX:
     # Advisory only (e.g. missing column — AI recommends reingestion, no DDL)

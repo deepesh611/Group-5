@@ -253,14 +253,8 @@ def validate_sql_safety(sql: str) -> tuple:
 
 def parse_advisor_response(response_text: str) -> dict:
     """
-    Parse and validate the AI Advisor's JSON response.
-
-    Validates:
-      - Valid JSON
-      - Required keys: SQL_FIX, NEW_JSON, SEVERITY, REASONING
-      - SEVERITY is one of INFO / WARNING / CRITICAL
-
-    Raises ValueError if parsing or validation fails.
+    Parse and validate the AI Advisor's JSON response, enforcing strict type coercion
+    to protect downstream consumers.
     """
     text = response_text.strip()
     text = re.sub(r"^```[\w]*\n?", "", text)
@@ -274,14 +268,30 @@ def parse_advisor_response(response_text: str) -> dict:
         log.error(f"Raw response (first 600 chars): {text[:600]}")
         raise ValueError(f"Advisor response is not valid JSON: {e}") from e
 
-    required = {"SQL_FIX", "NEW_JSON", "SEVERITY", "REASONING"}
-    missing  = required - set(parsed.keys())
-    if missing:
-        raise ValueError(f"Advisor response missing required keys: {missing}")
+    if not isinstance(parsed, dict):
+        raise ValueError("Advisor response root must be a JSON object")
 
-    if parsed["SEVERITY"] not in ("INFO", "WARNING", "CRITICAL"):
-        log.warning(f"Unexpected SEVERITY value '{parsed['SEVERITY']}' — defaulting to WARNING")
-        parsed["SEVERITY"] = "WARNING"
+    # 1. Enforce SQL_FIX as string
+    sql_fix = parsed.get("SQL_FIX")
+    if sql_fix is None:
+        parsed["SQL_FIX"] = ""
+    else:
+        parsed["SQL_FIX"] = str(sql_fix).strip()
+
+    # 2. Enforce NEW_JSON strictly as a dictionary to prevent AttributeError
+    new_json = parsed.get("NEW_JSON")
+    if not isinstance(new_json, dict):
+        parsed["NEW_JSON"] = {}
+
+    # 3. Enforce SEVERITY as string mapping to INFO, WARNING, CRITICAL
+    severity = str(parsed.get("SEVERITY", "WARNING")).strip().upper()
+    if severity not in ("INFO", "WARNING", "CRITICAL"):
+        severity = "WARNING"
+    parsed["SEVERITY"] = severity
+
+    # 4. Enforce REASONING as string
+    reasoning = parsed.get("REASONING")
+    parsed["REASONING"] = str(reasoning) if reasoning is not None else ""
 
     return parsed
 
