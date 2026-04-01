@@ -1,4 +1,9 @@
 # Databricks notebook source
+# DBTITLE 1,Install required packages
+# MAGIC %pip install langchain-openai openai tiktoken -q
+
+# COMMAND ----------
+
 # 00_config.py — Central Configuration
 # Single source of truth for all constants, paths, and helper functions.
 # Every pipeline and utility notebook runs this first via: %run ./utils/00_config
