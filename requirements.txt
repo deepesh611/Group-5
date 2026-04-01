@@ -1,3 +1,7 @@
-pyspark
 boto3
+pyspark
 delta-spark
+langchain-openai
+langgraph
+openai
+tiktoken

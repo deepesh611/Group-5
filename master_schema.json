@@ -1,0 +1,788 @@
+{
+  "_metadata": {
+    "version": "1.1.0",
+    "last_updated": "2026-04-01",
+    "catalog": "project5",
+    "schema": "delta_tables",
+    "description": "Master metadata file for the Natural Language Data Explorer. Acts as the AI Extractor's and AI Advisor's single source of truth for table structures, relationships, PHI flags, and few-shot SQL examples.",
+    "managed_by": "AI Advisor (Pipeline 3)",
+    "adls_path": "abfss://<container>@<storage_account>.dfs.core.windows.net/metadata/master_schema.json",
+    "note": "Column definitions match actual CSV exports exactly (verified via all_csv_columns.json). No phantom columns included."
+  },
+  "tables": {
+    "patients": {
+      "description": "Core demographic table. One row per unique patient. All other tables link back to this via the 'patient' foreign key.",
+      "delta_table": "project5.delta_tables.patients",
+      "primary_key": "id",
+      "csv_columns": 17,
+      "row_count_approx": null,
+      "columns": {
+        "id": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "Unique patient UUID. Primary key. Used as FK in all other tables."
+        },
+        "birthdate": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Patient date of birth. Format: YYYY-MM-DD."
+        },
+        "deathdate": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Date of death if applicable, else NULL. Format: YYYY-MM-DD."
+        },
+        "ssn": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "REDACT",
+          "description": "Social Security Number. Always redact in output."
+        },
+        "drivers": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "REDACT",
+          "description": "Driver's license number."
+        },
+        "passport": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "REDACT",
+          "description": "Passport number."
+        },
+        "prefix": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Name prefix (Mr., Mrs., Dr., etc.)."
+        },
+        "first": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "REDACT",
+          "description": "Patient first name."
+        },
+        "last": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "REDACT",
+          "description": "Patient last name."
+        },
+        "suffix": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Name suffix (Jr., Sr., etc.)."
+        },
+        "maiden": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "REDACT",
+          "description": "Patient maiden name."
+        },
+        "marital": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Marital status code (M=Married, S=Single, etc.)."
+        },
+        "race": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Patient race. Safe for analytics."
+        },
+        "ethnicity": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Patient ethnicity. Safe for analytics."
+        },
+        "gender": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Patient gender (M/F)."
+        },
+        "birthplace": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "GENERALIZE",
+          "description": "City/state/country of birth."
+        },
+        "address": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "REDACT",
+          "description": "Street address."
+        }
+      }
+    },
+    "encounters": {
+      "description": "Records every clinical encounter (visit, ER, etc.). Links to patients via patient FK.",
+      "delta_table": "project5.delta_tables.encounters",
+      "primary_key": "id",
+      "foreign_keys": {
+        "patient": "patients.id"
+      },
+      "csv_columns": 7,
+      "row_count_approx": null,
+      "columns": {
+        "id": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "Unique encounter UUID. Primary key."
+        },
+        "date": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Date of the encounter. Format: YYYY-MM-DD."
+        },
+        "patient": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to patients.id."
+        },
+        "code": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "SNOMED-CT code for the encounter type."
+        },
+        "description": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Human-readable description of the encounter type."
+        },
+        "reasoncode": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "SNOMED-CT code for the reason of encounter."
+        },
+        "reasondescription": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Human-readable reason for the encounter."
+        }
+      }
+    },
+    "conditions": {
+      "description": "All diagnosed conditions per patient. Each row is one condition diagnosis linked to a patient and optionally an encounter.",
+      "delta_table": "project5.delta_tables.conditions",
+      "primary_key": null,
+      "foreign_keys": {
+        "patient": "patients.id",
+        "encounter": "encounters.id"
+      },
+      "csv_columns": 6,
+      "row_count_approx": null,
+      "columns": {
+        "start": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Date the condition was first diagnosed. Format: YYYY-MM-DD."
+        },
+        "stop": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Date the condition was resolved. NULL if still active. Format: YYYY-MM-DD."
+        },
+        "patient": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to patients.id."
+        },
+        "encounter": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to encounters.id where diagnosis occurred."
+        },
+        "code": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "SNOMED-CT condition code. Use for filtering by disease (e.g. '44054006' = Diabetes)."
+        },
+        "description": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Plain English condition name. AI should use this for WHERE clauses (e.g. WHERE description ILIKE '%diabetes%')."
+        }
+      }
+    },
+    "medications": {
+      "description": "All medication prescriptions. Each row is one medication course for a patient.",
+      "delta_table": "project5.delta_tables.medications",
+      "primary_key": null,
+      "foreign_keys": {
+        "patient": "patients.id",
+        "encounter": "encounters.id"
+      },
+      "csv_columns": 8,
+      "row_count_approx": null,
+      "columns": {
+        "start": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Prescription start date. Format: YYYY-MM-DD."
+        },
+        "stop": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Prescription end date. NULL if ongoing. Format: YYYY-MM-DD."
+        },
+        "patient": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to patients.id."
+        },
+        "encounter": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to encounters.id where medication was prescribed."
+        },
+        "code": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "RxNorm medication code."
+        },
+        "description": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Medication name. Use for WHERE clauses (e.g. WHERE description ILIKE '%metformin%')."
+        },
+        "reasoncode": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "SNOMED-CT code for why medication was prescribed."
+        },
+        "reasondescription": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Plain English reason for prescription."
+        }
+      }
+    },
+    "procedures": {
+      "description": "All clinical procedures performed on patients. Each row is one procedure tied to a patient and encounter.",
+      "delta_table": "project5.delta_tables.procedures",
+      "primary_key": null,
+      "foreign_keys": {
+        "patient": "patients.id",
+        "encounter": "encounters.id"
+      },
+      "csv_columns": 7,
+      "row_count_approx": null,
+      "columns": {
+        "date": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Date the procedure was performed. Format: YYYY-MM-DD."
+        },
+        "patient": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to patients.id."
+        },
+        "encounter": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to encounters.id."
+        },
+        "code": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "SNOMED-CT procedure code."
+        },
+        "description": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Procedure name (e.g. 'Colonoscopy', 'Chest X-ray')."
+        },
+        "reasoncode": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "SNOMED-CT code for why procedure was performed."
+        },
+        "reasondescription": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Plain English reason for procedure."
+        }
+      }
+    },
+    "allergies": {
+      "description": "Patient allergy records. Each row is one allergy for a patient.",
+      "delta_table": "project5.delta_tables.allergies",
+      "primary_key": null,
+      "foreign_keys": {
+        "patient": "patients.id",
+        "encounter": "encounters.id"
+      },
+      "csv_columns": 6,
+      "row_count_approx": null,
+      "columns": {
+        "start": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Date allergy was recorded. Format: YYYY-MM-DD."
+        },
+        "stop": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Date allergy was resolved. NULL if still active. Format: YYYY-MM-DD."
+        },
+        "patient": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to patients.id."
+        },
+        "encounter": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to encounters.id."
+        },
+        "code": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "SNOMED-CT allergy code."
+        },
+        "description": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Allergen name (e.g. 'Penicillin', 'Peanut'). Use for WHERE clause filtering."
+        }
+      }
+    },
+    "immunizations": {
+      "description": "All immunization records per patient. Each row is one vaccine administered at one encounter.",
+      "delta_table": "project5.delta_tables.immunizations",
+      "primary_key": null,
+      "foreign_keys": {
+        "patient": "patients.id",
+        "encounter": "encounters.id"
+      },
+      "csv_columns": 5,
+      "row_count_approx": null,
+      "columns": {
+        "date": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Date vaccine was administered. Format: YYYY-MM-DD."
+        },
+        "patient": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to patients.id."
+        },
+        "encounter": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to encounters.id."
+        },
+        "code": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "CVX vaccine code."
+        },
+        "description": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Vaccine name (e.g. 'Influenza seasonal injectable preservative free')."
+        }
+      }
+    },
+    "observations": {
+      "description": "Clinical observations — vitals, lab results. High volume. Each row is one observation tied to a patient and encounter.",
+      "delta_table": "project5.delta_tables.observations",
+      "primary_key": null,
+      "foreign_keys": {
+        "patient": "patients.id",
+        "encounter": "encounters.id"
+      },
+      "csv_columns": 7,
+      "row_count_approx": null,
+      "columns": {
+        "date": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Date observation was recorded. Format: YYYY-MM-DD."
+        },
+        "patient": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to patients.id."
+        },
+        "encounter": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to encounters.id."
+        },
+        "code": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "LOINC code for the observation type."
+        },
+        "description": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Observation name (e.g. 'Body Weight', 'Glucose [Mass/volume] in Blood'). Use for WHERE filtering."
+        },
+        "value": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Observed value. Always stored as string — cast in SQL as needed (e.g. CAST(value AS DOUBLE))."
+        },
+        "units": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Unit of measurement (e.g. 'kg', 'mmHg', '%')."
+        }
+      }
+    },
+    "careplans": {
+      "description": "Care plan records — structured treatment plans assigned to patients. Each row is one care plan activity.",
+      "delta_table": "project5.delta_tables.careplans",
+      "primary_key": "id",
+      "foreign_keys": {
+        "patient": "patients.id",
+        "encounter": "encounters.id"
+      },
+      "csv_columns": 9,
+      "row_count_approx": null,
+      "columns": {
+        "id": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "Unique care plan UUID."
+        },
+        "start": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Care plan start date. Format: YYYY-MM-DD."
+        },
+        "stop": {
+          "type": "date",
+          "phi": true,
+          "phi_type": "QUASI_IDENTIFIER",
+          "masking": "FPE_DATE_SHIFT",
+          "description": "Care plan end date. NULL if ongoing. Format: YYYY-MM-DD."
+        },
+        "patient": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to patients.id."
+        },
+        "encounter": {
+          "type": "string",
+          "phi": true,
+          "phi_type": "DIRECT_IDENTIFIER",
+          "masking": "FPE_UUID",
+          "description": "FK to encounters.id."
+        },
+        "code": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "SNOMED-CT care plan code."
+        },
+        "description": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Care plan name (e.g. 'Diabetes self management plan')."
+        },
+        "reasoncode": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "SNOMED-CT code for the reason care plan was initiated."
+        },
+        "reasondescription": {
+          "type": "string",
+          "phi": false,
+          "phi_type": null,
+          "masking": null,
+          "description": "Plain English reason for care plan."
+        }
+      }
+    }
+  },
+  "relationships": {
+    "description": "Canonical join paths. AI Extractor MUST follow these paths. Never infer joins from column name similarity alone.",
+    "paths": [
+      {
+        "name": "patient_conditions",
+        "description": "All conditions for a patient",
+        "sql": "FROM patients p JOIN conditions c ON p.id = c.patient"
+      },
+      {
+        "name": "patient_encounters",
+        "description": "All encounters for a patient",
+        "sql": "FROM patients p JOIN encounters e ON p.id = e.patient"
+      },
+      {
+        "name": "encounter_conditions",
+        "description": "All conditions diagnosed at a specific encounter",
+        "sql": "FROM encounters e JOIN conditions c ON e.id = c.encounter"
+      },
+      {
+        "name": "patient_medications_direct",
+        "description": "Medications prescribed to a patient",
+        "sql": "FROM patients p JOIN medications m ON p.id = m.patient"
+      },
+      {
+        "name": "patient_medications_via_encounter",
+        "description": "Medications with encounter context",
+        "sql": "FROM patients p JOIN encounters e ON p.id = e.patient JOIN medications m ON e.id = m.encounter"
+      },
+      {
+        "name": "patient_observations",
+        "description": "Lab results or vitals for a patient",
+        "sql": "FROM patients p JOIN observations o ON p.id = o.patient"
+      },
+      {
+        "name": "patient_procedures",
+        "description": "Procedures performed on a patient",
+        "sql": "FROM patients p JOIN procedures pr ON p.id = pr.patient"
+      },
+      {
+        "name": "patient_allergies",
+        "description": "Allergies recorded for a patient",
+        "sql": "FROM patients p JOIN allergies a ON p.id = a.patient"
+      },
+      {
+        "name": "patient_immunizations",
+        "description": "Vaccines administered to a patient",
+        "sql": "FROM patients p JOIN immunizations i ON p.id = i.patient"
+      },
+      {
+        "name": "patient_careplans",
+        "description": "Active care plans for a patient",
+        "sql": "FROM patients p JOIN careplans cp ON p.id = cp.patient"
+      },
+      {
+        "name": "conditions_with_encounter",
+        "description": "Conditions with their encounter date context",
+        "sql": "FROM patients p JOIN encounters e ON p.id = e.patient JOIN conditions c ON e.id = c.encounter"
+      }
+    ]
+  },
+  "few_shot_examples": [
+    {
+      "question": "How many patients were diagnosed with diabetes?",
+      "reasoning": "Filter conditions table by description containing 'diabetes'. Count distinct patients.",
+      "sql": "SELECT COUNT(DISTINCT patient) AS diabetic_patient_count FROM project5.delta_tables.conditions WHERE LOWER(description) LIKE '%diabetes%'"
+    },
+    {
+      "question": "How many encounters happened last month?",
+      "reasoning": "Encounters table, filter date in last calendar month.",
+      "sql": "SELECT COUNT(*) AS encounters_last_month FROM project5.delta_tables.encounters WHERE DATE_TRUNC('month', date) = DATE_TRUNC('month', ADD_MONTHS(CURRENT_DATE(), -1))"
+    },
+    {
+      "question": "What are the top 5 most prescribed medications?",
+      "reasoning": "Aggregate medications by description, count prescriptions, order descending.",
+      "sql": "SELECT description, COUNT(*) AS prescription_count FROM project5.delta_tables.medications GROUP BY description ORDER BY prescription_count DESC LIMIT 5"
+    },
+    {
+      "question": "List all patients who have a penicillin allergy",
+      "reasoning": "Filter allergies table for penicillin, join to patients for demographics.",
+      "sql": "SELECT DISTINCT p.id, p.gender, p.race FROM project5.delta_tables.patients p JOIN project5.delta_tables.allergies a ON p.id = a.patient WHERE LOWER(a.description) LIKE '%penicillin%'"
+    },
+    {
+      "question": "What is the average number of encounters per patient?",
+      "reasoning": "Count encounters grouped by patient, then average that count.",
+      "sql": "SELECT AVG(encounter_count) AS avg_encounters_per_patient FROM (SELECT patient, COUNT(*) AS encounter_count FROM project5.delta_tables.encounters GROUP BY patient) subq"
+    },
+    {
+      "question": "Which conditions are most common among patients over 60?",
+      "reasoning": "Filter patients by age using birthdate, join to conditions, group and count.",
+      "sql": "SELECT c.description, COUNT(*) AS condition_count FROM project5.delta_tables.patients p JOIN project5.delta_tables.conditions c ON p.id = c.patient WHERE DATEDIFF(CURRENT_DATE(), p.birthdate) / 365 > 60 GROUP BY c.description ORDER BY condition_count DESC LIMIT 10"
+    },
+    {
+      "question": "Show me the average glucose level across all patients",
+      "reasoning": "Observations table, filter description for glucose, cast value to DOUBLE, compute average.",
+      "sql": "SELECT AVG(CAST(value AS DOUBLE)) AS avg_glucose, units FROM project5.delta_tables.observations WHERE LOWER(description) LIKE '%glucose%' GROUP BY units"
+    },
+    {
+      "question": "How many immunizations happened in 2023?",
+      "reasoning": "Filter immunizations by year of date = 2023.",
+      "sql": "SELECT COUNT(*) AS immunizations_2023 FROM project5.delta_tables.immunizations WHERE YEAR(date) = 2023"
+    },
+    {
+      "question": "Which patients have more than 3 active conditions?",
+      "reasoning": "Filter conditions where stop IS NULL (still active), group by patient, filter having count > 3.",
+      "sql": "SELECT patient, COUNT(*) AS active_condition_count FROM project5.delta_tables.conditions WHERE stop IS NULL GROUP BY patient HAVING COUNT(*) > 3 ORDER BY active_condition_count DESC"
+    },
+    {
+      "question": "What medications were prescribed for patients diagnosed with hypertension?",
+      "reasoning": "Join conditions filtered for hypertension to medications via patient FK.",
+      "sql": "SELECT DISTINCT m.description AS medication FROM project5.delta_tables.conditions c JOIN project5.delta_tables.medications m ON c.patient = m.patient WHERE LOWER(c.description) LIKE '%hypertension%' ORDER BY m.description"
+    }
+  ],
+  "phi_masking_rules": {
+    "description": "Role-based masking applied POST query execution in Python backend. AI Extractor has full unmasked access to Delta tables for SQL generation and execution. Masking is applied on the returned DataFrame before presenting to user.",
+    "masking_strategies": {
+      "REDACT": "Replace value with '***REDACTED***'",
+      "FPE_UUID": "Format-preserving encryption — output looks like a valid UUID but is deterministically encrypted",
+      "FPE_DATE_SHIFT": "Shift date by a fixed patient-specific offset — preserves temporal relationships between dates for the same patient",
+      "GENERALIZE": "Replace specific value with a broader category (e.g. city → state)",
+      "TRUNCATE_3DIG": "Keep only first 3 digits of ZIP code",
+      "ROUND_2DP": "Round coordinates to 2 decimal places"
+    },
+    "roles": {
+      "doctor": {
+        "description": "Clinical user. Can see PHI for their own patients. DIRECT_IDENTIFIER fields shown for targeted queries, masked for bulk analytics.",
+        "phi_access": "TARGETED_ONLY",
+        "masked_phi_types": [
+          "DIRECT_IDENTIFIER"
+        ]
+      },
+      "analyst": {
+        "description": "Business/data analyst. No direct identifiers ever. Quasi-identifiers generalized.",
+        "phi_access": "NONE",
+        "masked_phi_types": [
+          "DIRECT_IDENTIFIER",
+          "QUASI_IDENTIFIER"
+        ]
+      },
+      "sysadmin": {
+        "description": "System administrator. Can see structural data and audit logs but not clinical PHI.",
+        "phi_access": "NONE",
+        "masked_phi_types": [
+          "DIRECT_IDENTIFIER",
+          "QUASI_IDENTIFIER"
+        ]
+      }
+    }
+  },
+  "drift_handling": {
+    "description": "Instructions for AI Advisor when processing schema drift events.",
+    "column_classification_prompt_hint": "When a new column is detected, check if its name or inferred content matches any FHIR R4 resource attribute or any PHI category defined in HIPAA Safe Harbor. If PHI is suspected, default masking strategy to REDACT until manually reviewed.",
+    "response_format": {
+      "SQL_FIX": "Exact ALTER TABLE DDL to execute on Databricks. Must be idempotent (use IF NOT EXISTS where possible).",
+      "NEW_JSON": "Updated column entry to merge into this master_schema.json under the correct table.",
+      "SEVERITY": "One of: INFO (additive, non-PHI), WARNING (additive, possible PHI or type change), CRITICAL (subtractive or rename — requires human approval regardless of auto-execute setting)",
+      "REASONING": "Plain English explanation of what changed, why the fix was chosen, and any FHIR/HIPAA considerations."
+    }
+  }
+}
