@@ -11,13 +11,25 @@
 # It does NOT change Delta or metadata.
 
 # COMMAND ----------
+
 # MAGIC %run ../utils/00_config
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/05_advisor_state_manager
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/06_advisor_policy
 
 # COMMAND ----------
+
+dbutils.jobs.taskValues.set("execution_strategy", execution_strategy)
+dbutils.jobs.taskValues.set("should_apply_ddl", should_apply_ddl)
+dbutils.jobs.taskValues.set("manual_review_required", manual_review_required)
+
+# COMMAND ----------
+
 import json
 
 

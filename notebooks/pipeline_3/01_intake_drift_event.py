@@ -11,15 +11,35 @@
 # This task does NOT call the LLM and does NOT modify Delta or metadata.
 
 # COMMAND ----------
+
+dbutils.widgets.text("table_name", "")
+dbutils.widgets.text("drift_event", "{}")
+dbutils.widgets.text("trigger_source", "manual")
+dbutils.widgets.text("run_mode", "autonomous")
+
+table_name = dbutils.widgets.get("table_name")
+drift_event = dbutils.widgets.get("drift_event")
+trigger_source = dbutils.widgets.get("trigger_source")
+run_mode = dbutils.widgets.get("run_mode")
+
+# COMMAND ----------
+
 # MAGIC %run ../utils/00_config
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/04_metadata_manager
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/05_advisor_state_manager
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/06_advisor_policy
 
 # COMMAND ----------
+
 import json
 from datetime import datetime
 
@@ -129,3 +149,10 @@ except Exception as e:
             "intake_status": "error",
         },
     })
+
+# COMMAND ----------
+
+# after you compute them:
+dbutils.jobs.taskValues.set("run_id", run_id)
+dbutils.jobs.taskValues.set("table_name", table_name)
+dbutils.jobs.taskValues.set("has_drift", has_drift)

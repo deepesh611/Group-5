@@ -10,17 +10,37 @@
 # This task does NOT validate or execute the recommendation.
 
 # COMMAND ----------
+
 # MAGIC %run ../utils/00_config
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/04_metadata_manager
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/03_openai_client
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/05_advisor_state_manager
+
 # COMMAND ----------
+
 # MAGIC %run ../utils/06_advisor_policy
 
 # COMMAND ----------
+
+dbutils.widgets.text("run_id", "")
+dbutils.widgets.text("table_name", "")
+
+run_id = dbutils.widgets.get("run_id")
+table_name = dbutils.widgets.get("table_name")
+
+dbutils.jobs.taskValues.set("recommendation_ready", True)
+
+# COMMAND ----------
+
 import json
 
 
