@@ -576,13 +576,69 @@ for table_name in TABLES_TO_PROCESS:
                         continue  # ← jump to next table, skip steps 4-6
 
             elif drift["severity"] == "WARNING":
-                msg = (
-                    f"WARNING drift on '{table_name}' — new/changed columns. "
-                    f"Drift logged to ADLS. Run Pipeline 3 manually for review."
-                )
-                log.warning(f"[{table_name}] {msg}")
-                report["notes"].append(msg)
-                # Falls through to steps 4-6 (write proceeds with warning noted)
+                if drift.get("new_columns") and ON_CRITICAL_DRIFT != "fallback":
+                    # ── New columns detected — trigger P3 to register them ────
+                    # New columns could be PHI and need AI evaluation before
+                    # being committed to master_schema.json with proper flags.
+                    print(f"\n  ⚠️  WARNING drift (new columns) — triggering AI Advisor (Pipeline 3) …")
+                    p3_result = trigger_pipeline_3(table_name, drift)
+
+                    if p3_result.get("status") == "fix_applied":
+                        msg = (
+                            f"Pipeline 3 fix applied for '{table_name}' (new column registered). "
+                            f"Re-run ingestion to pick up the fixed schema."
+                        )
+                        print(f"  ✅ {msg}")
+                        report["notes"].append(msg)
+                        invalidate_cache()
+                        report["status"] = "skipped"
+                        report["error"]  = "WARNING drift — P3 fix applied; re-run required"
+                        report["drift_severity"] = "WARNING"
+                        run_reports.append(report)
+                        print_table_report(report)
+                        continue
+
+                    elif p3_result.get("status") in ("no_fix_needed", "advisory"):
+                        msg = (
+                            f"P3 assessed WARNING drift on '{table_name}' — "
+                            f"proceeding with normal write."
+                        )
+                        log.info(f"[{table_name}] {msg}")
+                        report["notes"].append(msg)
+                        # Fall through to steps 4-6
+
+                    elif p3_result.get("status") == "error":
+                        p3_reason = (
+                            p3_result.get("reasoning")
+                            or p3_result.get("message")
+                            or "no reasoning provided"
+                        )
+                        msg = (
+                            f"P3 returned error for WARNING drift on '{table_name}': "
+                            f"{str(p3_reason)[:200]}. "
+                            f"Proceeding with normal write (WARNING drift is non-blocking)."
+                        )
+                        log.warning(f"[{table_name}] {msg}")
+                        report["notes"].append(msg)
+                        # Fall through to steps 4-6 (WARNING is non-blocking)
+
+                    else:
+                        msg = (
+                            f"P3 returned '{p3_result.get('status', 'unknown')}' for "
+                            f"WARNING drift on '{table_name}'. Proceeding with normal write."
+                        )
+                        log.warning(f"[{table_name}] {msg}")
+                        report["notes"].append(msg)
+                        # Fall through to steps 4-6
+
+                else:
+                    msg = (
+                        f"WARNING drift on '{table_name}' — "
+                        f"Drift logged to ADLS. Proceeding with write."
+                    )
+                    log.warning(f"[{table_name}] {msg}")
+                    report["notes"].append(msg)
+                # Falls through to steps 4-6
 
             elif drift["severity"] == "INFO":
                 msg = f"INFO drift on '{table_name}' — compatible type widening, proceeding."
