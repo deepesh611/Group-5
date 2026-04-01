@@ -20,9 +20,7 @@ import time
 # LangChain reads OPENAI_API_KEY from os.environ on first import.
 
 def _init_openai():
-    api_key = get_secret(OPENAI_SECRET_KEY)
-    os.environ["OPENAI_API_KEY"] = api_key
-    log.info("OpenAI API key loaded from secret scope '%s'", SECRET_SCOPE)
+    os.environ["OPENAI_API_KEY"] = dbutils.secrets.get(scope="llm-scope", key="openai-key")
 
 _init_openai()
 
@@ -177,12 +175,8 @@ def build_advisor_prompt(
 
 ═══ CONTEXT ═══
 Fully qualified table: {full_table}
-Data source: Synthea synthetic EHR data — all new columns may contain PHI.
-Compliance: HIPAA Safe Harbor. Apply the 18 HIPAA identifier rules:
-  If a new column name or inferred content matches: names, sub-state geographic, dates except year,
-  phone/fax, email, SSN, MRN, health plan numbers, account numbers, certificate/license numbers,
-  vehicle IDs, device IDs, URLs, IPs, biometric identifiers, full-face photos, or any other
-  unique identifying number → set phi=true, masking="REDACT" as the safe default.
+Data source: Synthea synthetic EHR data.
+Compliance: HIPAA Safe Harbor — 18 HIPAA identifier categories.
 
 ═══ CURRENT TABLE SCHEMA ═══
 {schema_json}
@@ -191,16 +185,35 @@ Compliance: HIPAA Safe Harbor. Apply the 18 HIPAA identifier rules:
 {drift_json}
 
 ═══ YOUR TASK ═══
-Analyze the drift. For each change, decide:
-  - Is this additive (new column)? → Provide ALTER TABLE DDL + NEW_JSON entry.
-  - Is this subtractive (missing column)? → SQL_FIX may be empty (cannot restore data); flag CRITICAL.
-  - Is this a type change? → Assess risk; CAST in SQL_FIX if safe, or flag CRITICAL if PHI column.
+Analyze the detected drift and produce a remediation plan.
+
+STRICT RULES — YOU MUST FOLLOW THESE EXACTLY:
+
+1. ADDITIVE DRIFT (new_columns in drift): a column exists in the CSV but NOT in the Delta table.
+   Action: SQL_FIX = ALTER TABLE {full_table} ADD COLUMNS (col_name TYPE).
+           NEW_JSON = schema definition for ONLY the new columns.
+
+2. SUBTRACTIVE DRIFT (missing_columns in drift): a column expected by master_schema.json is ABSENT from the CSV.
+   This means the UPSTREAM DATA SOURCE lost the column. We CANNOT restore it via DDL.
+   Action: SQL_FIX = "" (EXACTLY empty string — DO NOT write any ALTER TABLE statement).
+           NEW_JSON = {{}} (EXACTLY empty dict — DO NOT define any column here).
+           SEVERITY = "CRITICAL".
+   REASON: Adding the column back via ALTER TABLE would create a NULL column. The pipeline
+   will instead use a schema-merge fallback (INSERT OVERWRITE) to preserve the Delta table
+   column with NULLs for new rows. Your job is ONLY to flag it as CRITICAL and advise.
+
+3. TYPE CHANGE DRIFT (type_changes in drift): a column exists in both but types differ.
+   If safe widening (e.g. int→long): SQL_FIX = CAST statement, SEVERITY = "WARNING".
+   If PHI column or dangerous change: SQL_FIX = "", SEVERITY = "CRITICAL", advise reingestion.
+
+4. PHI RULE: If any new column name or description matches: names, geographic data, dates,
+   phone, email, SSN, MRN, account numbers, or any unique identifiers → set phi=true, masking="REDACT".
 
 ═══ RESPOND WITH EXACTLY THIS JSON — no markdown, no backticks, no extra text ═══
 {{
-  "SQL_FIX": "Exact ALTER TABLE DDL to execute. Example: ALTER TABLE {full_table} ADD COLUMNS (col_name STRING). Use empty string if no DDL is needed or safe.",
+  "SQL_FIX": "ALTER TABLE DDL string, OR empty string \"\" if no DDL is appropriate (required for subtractive drift)",
   "NEW_JSON": {{
-    "column_name_here": {{
+    "only_for_new_columns": {{
       "type": "spark_sql_type",
       "phi": true,
       "phi_type": "DIRECT_IDENTIFIER",
@@ -209,7 +222,7 @@ Analyze the drift. For each change, decide:
     }}
   }},
   "SEVERITY": "INFO or WARNING or CRITICAL",
-  "REASONING": "Plain English: what changed, why you chose this fix, HIPAA/FHIR considerations, and any risk warnings for human reviewer."
+  "REASONING": "Plain English explanation: what drifted, which rule above you applied, and why."
 }}"""
 
 
@@ -251,10 +264,14 @@ def validate_sql_safety(sql: str) -> tuple:
     return True, None
 
 
-def parse_advisor_response(response_text: str) -> dict:
+def parse_advisor_response(response_text: str, drift_report: dict = None) -> dict:
     """
     Parse and validate the AI Advisor's JSON response, enforcing strict type coercion
     to protect downstream consumers.
+
+    drift_report is optional but strongly recommended: when provided, an additional
+    server-side rule is applied to prevent GPT-4o from generating DDL for subtractive
+    drift (missing columns), which would cause the downstream INSERT OVERWRITE to fail.
     """
     text = response_text.strip()
     text = re.sub(r"^```[\w]*\n?", "", text)
@@ -292,6 +309,27 @@ def parse_advisor_response(response_text: str) -> dict:
     # 4. Enforce REASONING as string
     reasoning = parsed.get("REASONING")
     parsed["REASONING"] = str(reasoning) if reasoning is not None else ""
+
+    # 5. SUBTRACTIVE DRIFT GUARDRAIL (server-side, deterministic, ignores LLM output)
+    # If the drift has missing columns (subtractive), the LLM must NOT generate any
+    # DDL or NEW_JSON. Delta cannot restore data that was never in the CSV.
+    # If LLM still returned DDL here (prompt hallucination), we forcibly discard it.
+    if drift_report is not None:
+        has_missing   = bool(drift_report.get("missing_columns"))
+        has_new       = bool(drift_report.get("new_columns"))
+        is_pure_subtractive = has_missing and not has_new
+
+        if is_pure_subtractive and parsed["SQL_FIX"]:
+            log.warning(
+                "[parse_advisor_response] LLM generated SQL_FIX '%s' for SUBTRACTIVE drift — "
+                "discarding (cannot restore missing column data via DDL). "
+                "Pipeline will use mergeSchema fallback.",
+                parsed["SQL_FIX"][:120],
+            )
+            parsed["SQL_FIX"]  = ""
+            parsed["NEW_JSON"] = {}
+            if parsed["SEVERITY"] != "CRITICAL":
+                parsed["SEVERITY"] = "CRITICAL"
 
     return parsed
 
@@ -340,13 +378,18 @@ def get_advisor_recommendation(drift_report: dict, table_name: str) -> dict:
 
     Returns the parsed advisor dict: {SQL_FIX, NEW_JSON, SEVERITY, REASONING}.
     Raises ValueError if the response cannot be parsed.
+
+    drift_report is passed through to parse_advisor_response to enable the
+    server-side subtractive-drift guardrail: if the LLM hallucinates a DDL fix
+    for a missing column (despite prompt instructions), the guardrail discards
+    it deterministically before it reaches Pipeline 3's execution logic.
     """
-    table_meta    = get_table_metadata(table_name)
-    advisor_text  = build_advisor_prompt(drift_report, table_name, table_meta)
+    table_meta   = get_table_metadata(table_name)
+    advisor_text = build_advisor_prompt(drift_report, table_name, table_meta)
 
     template = build_advisor_prompt_template()
     llm      = get_llm(temperature=0.0)
     chain    = template | llm
 
     response = call_with_retry(chain, {"advisor_prompt": advisor_text})
-    return parse_advisor_response(response.content)
+    return parse_advisor_response(response.content, drift_report=drift_report)
