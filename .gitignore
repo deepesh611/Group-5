@@ -215,3 +215,5 @@ data
 trial
 # delta_tables
 .DS_Store
+
+ai-data-explorer/healthcare-explorer_2026_04_01-07_07/streamlit-data-app/app.yaml

@@ -192,3 +192,5 @@ mlflow.db
 !.claude/skills/enable-feedback/
 !.claude/AGENTS.md
 !.claude/CLAUDE.md
+
+app.yaml
