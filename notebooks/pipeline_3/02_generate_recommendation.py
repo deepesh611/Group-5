@@ -41,20 +41,16 @@ dbutils.jobs.taskValues.set("recommendation_ready", True)
 
 # COMMAND ----------
 
+# DBTITLE 1,Generate recommendation and set task values
 import json
 
 
-def _set_task_value(key: str, value):
+def _safe_set(key, value):
+    """Set a job task value, silently skip if not in a job context."""
     try:
         dbutils.jobs.taskValues.set(key=key, value=value)
     except Exception:
         pass
-
-
-def _exit(result: dict, **task_values):
-    for key, value in task_values.items():
-        _set_task_value(key, value)
-    dbutils.notebook.exit(json.dumps(result))
 
 
 def _print_recommendation(rec: dict, table: str, status: str):
@@ -80,7 +76,7 @@ def _print_recommendation(rec: dict, table: str, status: str):
     print(f"{'─'*70}")
     new_json = rec.get('NEW_JSON', {}) or {}
     if new_json:
-        print(f"  📋 NEW_JSON (column definitions for master_schema.json):")
+        print(f"  📋 NEW_JSON (column definitions):")
         print(f"     {json.dumps(new_json, indent=6)}")
     else:
         print(f"  📋 NEW_JSON:  (empty)")
@@ -94,7 +90,6 @@ TABLE_NAME = dbutils.widgets.get("table_name").strip().lower()
 RUN_ID = dbutils.widgets.get("run_id").strip()
 
 _result = None
-_task_vals = {}
 
 try:
     intake = read_advisor_artifact(RUN_ID, "01_intake", TABLE_NAME)
@@ -139,10 +134,13 @@ try:
         "missing_columns": [c["column"] for c in drift.get("missing_columns", [])],
         "type_changes": [c["column"] for c in drift.get("type_changes", [])],
     }
-    _task_vals = {
-        "recommendation_status": status,
-        "advisor_severity": rec.get("SEVERITY", "UNKNOWN"),
-    }
+
+    # Set task values DIRECTLY — NOT inside a function that calls notebook.exit()
+    _safe_set("recommendation_status", status)
+    _safe_set("advisor_severity", rec.get("SEVERITY", "UNKNOWN"))
+
+    print(f"\u2705 Recommendation generated: severity={rec.get('SEVERITY', 'UNKNOWN')}, sql_fix={'present' if rec.get('SQL_FIX') else 'empty'}")
+
 except Exception as e:
     write_advisor_artifact(
         RUN_ID or "unknown",
@@ -151,9 +149,14 @@ except Exception as e:
         TABLE_NAME,
     )
     _result = {"status": "error", "table": TABLE_NAME, "run_id": RUN_ID, "reason": str(e)}
-    _task_vals = {
-        "recommendation_status": "error",
-        "advisor_severity": "UNKNOWN",
-    }
 
-_exit(_result, **_task_vals)
+    _safe_set("recommendation_status", "error")
+    _safe_set("advisor_severity", "UNKNOWN")
+
+    print(f"\u274c Generation error: {e}")
+
+# COMMAND ----------
+
+# DBTITLE 1,Notebook exit (separate cell)
+# Physically separated from try/except to prevent exit exception from being caught
+dbutils.notebook.exit(json.dumps(_result))

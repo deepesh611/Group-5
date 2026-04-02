@@ -30,21 +30,24 @@ from datetime import datetime
 
 dbutils.widgets.text("run_id", "", "Preflight run ID")
 dbutils.widgets.dropdown("dry_run", "false", ["false", "true"], "Dry run")
+dbutils.widgets.dropdown("write_blocked", "false", ["false", "true"], "Write blocked tables (after P3)")
 
 RUN_ID = dbutils.widgets.get("run_id").strip()
 DRY_RUN = dbutils.widgets.get("dry_run").strip().lower() == "true"
+WRITE_BLOCKED = dbutils.widgets.get("write_blocked").strip().lower() == "true"
 
 if not RUN_ID:
     raise ValueError("Missing required parameter: run_id")
 
 init_catalog()
 
-print(f"{'─'*70}")
-print("Pipeline 1 — WRITE TABLES")
-print(f"Run ID:    {RUN_ID}")
-print(f"Dry run:   {DRY_RUN}")
-print(f"Started:   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print(f"{'─'*70}")
+print(f"{'\u2500'*70}")
+print("Pipeline 1 \u2014 WRITE TABLES")
+print(f"Run ID:        {RUN_ID}")
+print(f"Dry run:       {DRY_RUN}")
+print(f"Write blocked: {WRITE_BLOCKED}")
+print(f"Started:       {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print(f"{'\u2500'*70}")
 
 # COMMAND ----------
 
@@ -89,7 +92,11 @@ for entry in manifest["entries"]:
         "error": "",
     }
 
-    if entry["status"] != "READY_TO_WRITE":
+    should_write = (entry["status"] == "READY_TO_WRITE")
+    if not should_write and WRITE_BLOCKED and entry["status"] == "BLOCKED_CRITICAL_DRIFT":
+        should_write = True
+        result["notes"].append("Writing after P3 drift resolution (write_blocked=true)")
+    if not should_write:
         result["notes"].append(f"Skipped because preflight status={entry['status']}")
         results["writes"].append(result)
         continue
@@ -113,7 +120,7 @@ for entry in manifest["entries"]:
         if DRY_RUN:
             result["status"] = "DRY_RUN"
             result["row_count"] = int(source_row_count)
-            result["notes"].append("Dry run — no write performed")
+            result["notes"].append("Dry run \u2014 no write performed")
         else:
             final_count = write_delta_table(df, table_name)
             if int(final_count) != int(source_row_count):

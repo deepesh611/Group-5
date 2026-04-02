@@ -23,20 +23,15 @@
 
 # COMMAND ----------
 
+# DBTITLE 1,Helper
 import json
 
-
-def _set_task_value(key: str, value):
+def _safe_set(key, value):
+    """Set a job task value, silently skip if not in a job context."""
     try:
         dbutils.jobs.taskValues.set(key=key, value=value)
     except Exception:
         pass
-
-
-def _exit(result: dict, **task_values):
-    for key, value in task_values.items():
-        _set_task_value(key, value)
-    dbutils.notebook.exit(json.dumps(result))
 
 # COMMAND ----------
 
@@ -47,6 +42,9 @@ TABLE_NAME = dbutils.widgets.get("table_name").strip().lower()
 RUN_ID = dbutils.widgets.get("run_id").strip()
 
 # COMMAND ----------
+
+# DBTITLE 1,Execute DDL and set task values
+_result = None
 
 try:
     validation_artifact = read_advisor_artifact(RUN_ID, "03_validation", TABLE_NAME)
@@ -68,26 +66,33 @@ try:
     print(f"{'─'*70}")
 
     if strategy == Strategy.AUTO_APPLY_DDL:
-        print(f"  🚀 EXECUTING AI-GENERATED DDL:")
-        for line in sql_fix.strip().split('\n'):
-            print(f"     {line}")
-        print(f"{'─'*70}")
-        try:
-            spark.sql(sql_fix)
-            ddl_executed = True
+        full_table = get_full_table_name(TABLE_NAME)
+        if not spark.catalog.tableExists(full_table):
+            ddl_executed = False
             status = "ok"
-            reason = "DDL executed successfully"
-            print(f"  ✅ DDL executed successfully!")
-        except Exception as e:
-            if "already exists" in str(e).lower():
+            reason = "Table does not exist yet — DDL skipped, P1 will create it"
+            print(f"  ⏭️  Table {full_table} does not exist — skipping ALTER TABLE (P1 will create)")
+        else:
+            print(f"  🚀 EXECUTING AI-GENERATED DDL:")
+            for line in sql_fix.strip().split('\n'):
+                print(f"     {line}")
+            print(f"{'─'*70}")
+            try:
+                spark.sql(sql_fix)
                 ddl_executed = True
                 status = "ok"
-                reason = "DDL treated as idempotent success — column already exists"
-                print(f"  ✅ Column already exists (idempotent success)")
-            else:
-                status = "error"
-                reason = f"DDL execution failed: {e}"
-                print(f"  ❌ DDL execution FAILED: {e}")
+                reason = "DDL executed successfully"
+                print(f"  ✅ DDL executed successfully!")
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    ddl_executed = True
+                    status = "ok"
+                    reason = "DDL treated as idempotent success — column already exists"
+                    print(f"  ✅ Column already exists (idempotent success)")
+                else:
+                    status = "error"
+                    reason = f"DDL execution failed: {e}"
+                    print(f"  ❌ DDL execution FAILED: {e}")
     else:
         print(f"  ⏭️  Skipped — strategy is {strategy}, not AUTO_APPLY_DDL")
         if sql_fix:
@@ -109,21 +114,23 @@ try:
         TABLE_NAME,
     )
 
-    _exit(
-        {
-            "status": status,
-            "table": TABLE_NAME,
-            "run_id": RUN_ID,
-            "ddl_executed": ddl_executed,
-            "sql_fix": sql_fix,
-            "strategy": strategy,
-            "drift_kind": validation.get("drift_kind", "unknown"),
-            "reason": reason,
-            "artifact_path": artifact_path,
-        },
-        ddl_status=status,
-        ddl_executed=str(bool(ddl_executed)).lower(),
-    )
+    _result = {
+        "status": status,
+        "table": TABLE_NAME,
+        "run_id": RUN_ID,
+        "ddl_executed": ddl_executed,
+        "sql_fix": sql_fix,
+        "strategy": strategy,
+        "drift_kind": validation.get("drift_kind", "unknown"),
+        "reason": reason,
+        "artifact_path": artifact_path,
+    }
+
+    _safe_set("ddl_status", status)
+    _safe_set("ddl_executed", str(bool(ddl_executed)).lower())
+
+    print(f"✅ Task values set: ddl_executed={ddl_executed}, status={status}")
+
 except Exception as e:
     write_advisor_artifact(
         RUN_ID or "unknown",
@@ -131,8 +138,15 @@ except Exception as e:
         {"table": TABLE_NAME, "status": "error", "ddl_executed": False, "reason": str(e)},
         TABLE_NAME,
     )
-    _exit(
-        {"status": "error", "table": TABLE_NAME, "run_id": RUN_ID, "ddl_executed": False, "reason": str(e)},
-        ddl_status="error",
-        ddl_executed="false",
-    )
+    _result = {"status": "error", "table": TABLE_NAME, "run_id": RUN_ID, "ddl_executed": False, "reason": str(e)}
+
+    _safe_set("ddl_status", "error")
+    _safe_set("ddl_executed", "false")
+
+    print(f"❌ Execution error: {e}")
+
+# COMMAND ----------
+
+# DBTITLE 1,Notebook exit (separate cell)
+# Physically separated from try/except to prevent exit exception from being caught
+dbutils.notebook.exit(json.dumps(_result))

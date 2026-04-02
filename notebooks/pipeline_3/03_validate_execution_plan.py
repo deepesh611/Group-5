@@ -24,21 +24,8 @@
 
 # COMMAND ----------
 
+# DBTITLE 1,Validate and set task values
 import json
-
-
-def _set_task_value(key: str, value):
-    try:
-        dbutils.jobs.taskValues.set(key=key, value=value)
-    except Exception:
-        pass
-
-
-def _exit(result: dict, **task_values):
-    for key, value in task_values.items():
-        _set_task_value(key, value)
-    dbutils.notebook.exit(json.dumps(result))
-
 
 dbutils.widgets.text("table_name", "", "Table name")
 dbutils.widgets.text("run_id", "", "Advisor run id")
@@ -48,8 +35,14 @@ TABLE_NAME = dbutils.widgets.get("table_name").strip().lower()
 RUN_ID = dbutils.widgets.get("run_id").strip()
 RUN_MODE = dbutils.widgets.get("run_mode").strip().lower() or "autonomous"
 
+def _safe_set(key, value):
+    """Set a job task value, silently skip if not in a job context."""
+    try:
+        dbutils.jobs.taskValues.set(key=key, value=value)
+    except Exception:
+        pass
+
 _result = None
-_task_vals = {}
 
 try:
     intake = read_advisor_artifact(RUN_ID, "01_intake", TABLE_NAME)
@@ -84,14 +77,23 @@ try:
         "execution_strategy": validation["execution_strategy"],
         "validation_ok": validation["validation_ok"],
         "artifact_path": artifact_path,
+        "drift_kind": validation.get("drift_kind", "unknown"),
+        "ddl_columns": validation.get("ddl_columns", []),
+        "json_columns": validation.get("json_columns", []),
+        "sql_validation_ok": validation.get("sql_validation", {}).get("ok", False),
+        "json_validation_ok": validation.get("json_validation", {}).get("ok", False),
+        "cross_validation_ok": validation.get("cross_validation", {}).get("ok", False),
     }
-    _task_vals = {
-        "validation_status": "ok",
-        "execution_strategy": validation["execution_strategy"],
-        "validation_ok": str(bool(validation["validation_ok"])).lower(),
-        "should_apply_ddl": str(validation["execution_strategy"] == "AUTO_APPLY_DDL").lower(),
-        "manual_review_required": str(validation["execution_strategy"] == "MANUAL_REVIEW").lower(),
-    }
+
+    # Set task values DIRECTLY — must not be inside a function that calls notebook.exit()
+    _safe_set("validation_status", "ok")
+    _safe_set("execution_strategy", validation["execution_strategy"])
+    _safe_set("validation_ok", str(bool(validation["validation_ok"])).lower())
+    _safe_set("should_apply_ddl", str(validation["execution_strategy"] == "AUTO_APPLY_DDL").lower())
+    _safe_set("manual_review_required", str(validation["execution_strategy"] == "MANUAL_REVIEW").lower())
+
+    print(f"\u2705 Validation complete: strategy={validation['execution_strategy']}, should_apply_ddl={validation['execution_strategy'] == 'AUTO_APPLY_DDL'}")
+
 except Exception as e:
     write_advisor_artifact(
         RUN_ID or "unknown",
@@ -100,12 +102,17 @@ except Exception as e:
         TABLE_NAME,
     )
     _result = {"status": "error", "table": TABLE_NAME, "run_id": RUN_ID, "reason": str(e)}
-    _task_vals = {
-        "validation_status": "error",
-        "execution_strategy": Strategy.MANUAL_REVIEW,
-        "validation_ok": "false",
-        "should_apply_ddl": "false",
-        "manual_review_required": "true",
-    }
 
-_exit(_result, **_task_vals)
+    _safe_set("validation_status", "error")
+    _safe_set("execution_strategy", Strategy.MANUAL_REVIEW)
+    _safe_set("validation_ok", "false")
+    _safe_set("should_apply_ddl", "false")
+    _safe_set("manual_review_required", "true")
+
+    print(f"\u274c Validation error: {e}")
+
+# COMMAND ----------
+
+# DBTITLE 1,Notebook exit (separate cell)
+# Physically separated from try/except to prevent exit exception from being caught
+dbutils.notebook.exit(json.dumps(_result))
