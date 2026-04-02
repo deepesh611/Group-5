@@ -4,6 +4,7 @@
 storage_account = "project5data"
 container = "data"
 BASE_PATH = f"abfss://{container}@{storage_account}.dfs.core.windows.net/raw/"
+
 CATALOG = "deepcatalog"
 SCHEMA = "delta_tables"
 
