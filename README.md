@@ -141,7 +141,7 @@ Additional features:
 - Expandable **🔍 View SQL Query** panel on every assistant response
 - Results capped at 50 rows by default; explicit user limits ("top 20") override the cap
 
-#### App Requirements
+<!-- #### App Requirements
 ```
 databricks-sql-connector~=3.4.0
 databricks-sdk~=0.33.0
@@ -151,82 +151,12 @@ langchain
 langchain-openai
 pydantic
 streamlit-option-menu
-```
+``` -->
 
 #### Required Environment Variable
 ```
 DATABRICKS_WAREHOUSE_ID   # Set in app.yaml for the Databricks App deployment
 OPENAI_API_KEY            # OpenAI API key
-```
-
----
-
-## Project Structure
-
-```
-Group-5/
-├── notebooks/                          # Production Databricks pipelines
-│   ├── pipeline_1_ingestion.py         # Pipeline 1 — full ingestion script (single file)
-│   ├── pipeline_3_advisor.py           # Pipeline 3 — full advisor script (single file)
-│   ├── pipeline_1/                     # Pipeline 1 split into Databricks notebook cells
-│   │   ├── 01_preflight_ingestion.py
-│   │   ├── 02_write_tables.py
-│   │   └── 03_finalize_ingestion.py
-│   ├── pipeline_3/                     # Pipeline 3 split into Databricks notebook cells
-│   │   ├── 01_intake_drift_event.py
-│   │   ├── 02_generate_recommendation.py
-│   │   ├── 03_validate_execution_plan.py
-│   │   ├── 04_apply_ddl.py
-│   │   ├── 05_update_metadata.py
-│   │   ├── 06_finalize.py
-│   │   └── 90_manual_review_apply.py
-│   └── utils/                          # Shared utility modules (%run'd by all pipelines)
-│       ├── 00_config.py                # Central config: paths, constants, catalog helpers
-│       ├── 01_schema_utils.py          # Schema drift detection, column normalisation
-│       ├── 02_phi_masking.py           # Role-based PHI masking (6 strategies, 3 roles)
-│       ├── 03_openai_client.py         # GPT-4o client with retry + structured output
-│       ├── 04_metadata_manager.py      # master_schema.json CRUD + cache management
-│       ├── 05_pipeline1_state_manager.py
-│       └── 06_advisor_policy.py        # Pure-Python advisor decision logic (unit-testable)
-│
-├── Text-to-SQL LLM/                    # Research & prototyping notebooks
-│   ├── Multi-Agent Pipeline.ipynb      # Full LangGraph pipeline prototype
-│   ├── Multi-Agent_Pipeline.ipynb
-│   └── single agent trial.ipynb
-│
-├── ai-data-explorer/                   # Streamlit frontend (Databricks App)
-│   └── healthcare-explorer_2026_04_01-07_07/
-│       └── streamlit-data-app/
-│           ├── app.py                  # App entry point
-│           ├── core/                   # Backend: SQL execution, agent integration
-│           └── pages/                  # Streamlit multi-page UI
-│
-├── tests/
-│   └── test_pipeline3.py               # 25+ unit tests for Pipeline 3 pure-Python logic
-│
-├── data/
-│   └── csv/                            # Synthea source CSV files (local copy)
-│       ├── patients.csv
-│       ├── encounters.csv
-│       ├── conditions.csv
-│       ├── medications.csv
-│       ├── procedures.csv
-│       ├── allergies.csv
-│       ├── immunizations.csv
-│       ├── observations.csv
-│       ├── careplans.csv
-│       └── all_csv_columns.json        # Column inventory for all 9 tables
-│
-├── docs/
-│   ├── text-to-sql.md                  # Detailed implementation guide for Pipeline 2 agents
-│   ├── initial plan.md                 # Original 3-phase project plan
-│   └── Project 5.docx                  # Project brief
-│
-├── master_schema.json                  # Canonical schema: types, PHI flags, masking rules
-├── csv_to_delta.py                     # Standalone local ingestion script (dev/testing)
-├── csv_to_delta_databricks_azure.py    # Simplified Databricks ingestion script
-├── DATABRICKS_SETUP.md                 # Full Azure + Databricks provisioning guide
-└── requirements.txt                    # Python dependencies
 ```
 
 ---
